@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,12 +77,22 @@ func prettyJSON(b []byte) ([]byte, bool) {
 	return buf.Bytes(), true
 }
 
-// headerSummary renders response headers as a compact block (used later by
-// a Headers tab; kept here so response rendering lives together).
-func headerSummary(resp model.Response) string {
-	var b strings.Builder
-	for _, h := range resp.Headers {
-		b.WriteString(dim(h.Name+": ") + h.Value + "\n")
+// renderResponseHeaders renders response headers as a sorted, aligned block
+// for the response pane's Headers tab.
+func renderResponseHeaders(resp model.Response) string {
+	if resp.Err != nil {
+		return dim("(no headers — request failed)")
 	}
-	return b.String()
+	if len(resp.Headers) == 0 {
+		return dim("(no response headers)")
+	}
+	hs := append([]model.Header(nil), resp.Headers...)
+	sort.Slice(hs, func(i, j int) bool { return hs[i].Name < hs[j].Name })
+
+	var b strings.Builder
+	for _, h := range hs {
+		name := lipgloss.NewStyle().Foreground(colMethod).Render(h.Name + ": ")
+		b.WriteString(name + h.Value + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

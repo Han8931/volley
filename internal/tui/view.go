@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/tabularasa/volley/internal/tui/keys"
 )
 
 // Palette — kept small and named so theming is a later, central change.
@@ -23,12 +21,26 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "starting volley…"
 	}
+	if m.showHelp {
+		return m.helpView()
+	}
 	l := m.computeLayout()
+	bottom := m.viewStatusBar()
+	if m.cmdActive {
+		bottom = m.viewCommandLine()
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.viewURLBar(l),
 		m.viewBody(l),
-		m.viewStatusBar(),
+		bottom,
 	)
+}
+
+// viewCommandLine renders the active ":" or "/" input across the bottom row.
+func (m Model) viewCommandLine() string {
+	prefix := lipgloss.NewStyle().Foreground(colAccent).Bold(true).
+		Render(string(m.cmdKind))
+	return lipgloss.NewStyle().Width(m.width).Render(prefix + m.cmd.View())
 }
 
 // paneStyle returns a bordered box, highlighted when focused.
@@ -50,7 +62,7 @@ func (m Model) viewURLBar(l layout) string {
 		Render(fmt.Sprintf(" %-6s", m.req.Method))
 
 	urlView := m.url.View()
-	if m.mode != keys.Insert && m.url.Value() == "" {
+	if !m.url.Focused() && m.url.Value() == "" {
 		urlView = lipgloss.NewStyle().Foreground(colDim).Render(m.url.Placeholder)
 	}
 
@@ -59,11 +71,7 @@ func (m Model) viewURLBar(l layout) string {
 }
 
 func (m Model) viewBody(l layout) string {
-	left := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(
-		title("REQUEST") + "\n\n" +
-			dim("Headers · Body · Query") + "\n" +
-			dim("(editor lands in Phase 3)"),
-	)
+	left := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
 	right := m.paneStyle(focusResponse, l.respInnerW, l.bodyInnerH).Render(m.viewResponseInner())
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
@@ -80,26 +88,64 @@ func (m Model) viewResponseInner() string {
 		return title("RESPONSE") + "\n\n" +
 			dim("Send a request with ") + keyHint("⏎") + dim(" to see the result here.")
 	default:
-		return renderStatusLine(m.resp) + "\n" + m.vp.View()
+		return renderStatusLine(m.resp) + "\n" + m.respTabBar() + "\n" + m.vp.View()
 	}
 }
 
-func (m Model) viewStatusBar() string {
-	modeTag := lipgloss.NewStyle().
-		Background(colAccent).Foreground(lipgloss.Color("#FFFFFF")).
-		Bold(true).Padding(0, 1).Render(m.mode.String())
+// respTabBar renders the Body / Headers selector for the response pane.
+func (m Model) respTabBar() string {
+	names := []string{"Body", "Headers"}
+	cells := make([]string, len(names))
+	for i, n := range names {
+		st := lipgloss.NewStyle().Padding(0, 1)
+		if i == m.respTab {
+			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colAccent).Bold(true)
+		} else {
+			st = st.Foreground(colDim)
+		}
+		cells[i] = st.Render(n)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, cells...)
+}
 
-	hints := " h/j/k/l move · i edit url · m method · ⏎ send · q quit"
+func (m Model) viewStatusBar() string {
+	editing := m.editing()
+	insert := m.inInsert()
+	fieldNormal := editing && !insert // captured field in Vim-normal mode
+	label := "NORMAL"
+	tagBG := colAccent
+	if insert {
+		label, tagBG = "INSERT", colOK
+	}
+	modeTag := lipgloss.NewStyle().
+		Background(tagBG).Foreground(lipgloss.Color("#000000")).
+		Bold(true).Padding(0, 1).Render(label)
+
+	var hints string
 	switch {
-	case m.mode == keys.Insert:
-		hints = " esc normal mode"
+	case m.statusMsg != "":
+		hints = " " + m.statusMsg
+	case insert:
+		hints = " esc — vim normal mode in this field"
+	case fieldNormal:
+		hints = " vim: x dd dw cw C w b u p · esc — leave field"
+	case m.pendingWindow:
+		hints = " window: h/j/k/l pick a pane"
+	case m.focus == focusURL:
+		hints = " h/l method · [/] request tabs · j move · i edit URL · ⏎ send · ? help"
+	case m.focus == focusRequest && m.reqPane.tab == tabBody:
+		hints = " [/] tab · i edit body (Vim) · ^w/tab switch panes · ? help"
+	case m.focus == focusRequest:
+		hints = " [/] tab · j/k row · h/l cell · i edit · o add · dd del · ^w/tab panes · ? help"
 	case m.focus == focusResponse:
-		hints = " j/k scroll · gg/G top/bottom · ^d/^u half-page · h back · ⏎ resend"
+		hints = " [/] body·headers · j/k scroll · / search · y yank · ^w/tab panes · ? help"
 	}
 
-	hint := lipgloss.NewStyle().Foreground(colDim).
-		Width(m.width - lipgloss.Width(modeTag)).
-		Render(hints)
+	hintStyle := lipgloss.NewStyle().Foreground(colDim)
+	if m.statusMsg != "" {
+		hintStyle = hintStyle.Foreground(colOK)
+	}
+	hint := hintStyle.Width(m.width - lipgloss.Width(modeTag)).Render(hints)
 
 	return lipgloss.JoinHorizontal(lipgloss.Left, modeTag, hint)
 }
@@ -107,5 +153,5 @@ func (m Model) viewStatusBar() string {
 func title(s string) string {
 	return lipgloss.NewStyle().Foreground(colAccent).Bold(true).Render(s)
 }
-func dim(s string) string { return lipgloss.NewStyle().Foreground(colDim).Render(s) }
+func dim(s string) string     { return lipgloss.NewStyle().Foreground(colDim).Render(s) }
 func keyHint(s string) string { return lipgloss.NewStyle().Foreground(colOK).Render(s) }

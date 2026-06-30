@@ -37,7 +37,11 @@ func Do(ctx context.Context, req model.Request) model.Response {
 		}
 	}
 
-	client := &http.Client{Timeout: DefaultTimeout}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(hr)
 	if err != nil {
 		return model.Response{Err: err, Duration: time.Since(start)}

@@ -3,12 +3,12 @@ package tui
 // layout holds the computed inner content sizes of each region for the
 // current window. Kept in one place so View() and the resize handler agree.
 type layout struct {
-	gap            int
-	urlInnerW      int // url bar inner content width
-	reqInnerW      int
-	respInnerW     int
-	bodyInnerH     int // inner height of the request/response panes
-	respViewportH  int // scrollable body height inside the response pane
+	gap           int
+	urlInnerW     int // url bar inner content width
+	reqInnerW     int
+	respInnerW    int
+	bodyInnerH    int // inner height of the request/response panes
+	respViewportH int // scrollable body height inside the response pane
 }
 
 // paneOverhead is border (2) + horizontal padding (2) per pane.

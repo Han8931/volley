@@ -26,6 +26,8 @@ type Request struct {
 	Headers []Header
 	Query   []KV
 	Body    string
+	// Timeout bounds this request; zero means use the engine default.
+	Timeout time.Duration
 }
 
 // NewRequest returns a sensible blank request.
