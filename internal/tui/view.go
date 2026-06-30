@@ -14,6 +14,7 @@ var (
 	colFg     = lipgloss.Color("#E5E5E5")
 	colOK     = lipgloss.Color("#34D399")
 	colMethod = lipgloss.Color("#F59E0B")
+	colSel    = lipgloss.Color("#2A2440")
 )
 
 // View implements tea.Model.
@@ -30,8 +31,7 @@ func (m Model) View() string {
 		bottom = m.viewCommandLine()
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.viewURLBar(l),
-		m.viewBody(l),
+		m.viewMain(l),
 		bottom,
 	)
 }
@@ -70,12 +70,26 @@ func (m Model) viewURLBar(l layout) string {
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
 }
 
-func (m Model) viewBody(l layout) string {
-	left := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
-	right := m.paneStyle(focusResponse, l.respInnerW, l.bodyInnerH).Render(m.viewResponseInner())
-
+func (m Model) viewMain(l layout) string {
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		m.viewURLBar(l),
+		m.viewBody(l),
+	)
+	if !m.collectionShown {
+		return right
+	}
+	collections := m.paneStyle(focusCollection, l.collectionInnerW, l.collectionInnerH).
+		Render(m.collectionPane.view())
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		left, strings.Repeat(" ", l.gap), right)
+		collections, strings.Repeat(" ", l.gap), right)
+}
+
+func (m Model) viewBody(l layout) string {
+	request := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
+	response := m.paneStyle(focusResponse, l.respInnerW, l.bodyInnerH).Render(m.viewResponseInner())
+	gap := strings.Repeat(" ", l.gap)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, response)
 }
 
 // viewResponseInner is the content placed inside the response pane: a status
@@ -133,6 +147,12 @@ func (m Model) viewStatusBar() string {
 		hints = " window: h/j/k/l pick a pane"
 	case m.focus == focusURL:
 		hints = " h/l method · [/] request tabs · j move · i edit URL · ⏎ send · ? help"
+	case m.pendingComma:
+		hints = " leader: n toggle tree"
+	case m.collectionMenu:
+		hints = " NERDTree menu: a add/save · o open · r rename · c copy · d delete · q cancel"
+	case m.focus == focusCollection:
+		hints = " collections: j/k move · o/l open/toggle · h collapse · m menu · ,n hide tree"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
 		hints = " [/] tab · i edit body (Vim) · ^w/tab switch panes · ? help"
 	case m.focus == focusRequest:

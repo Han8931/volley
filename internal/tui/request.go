@@ -101,6 +101,20 @@ func (p requestPane) headersOut() []model.Header { return p.headers.Headers() }
 func (p requestPane) queryOut() []model.KV       { return p.query.Rows() }
 func (p requestPane) bodyOut() string            { return p.body.Text() }
 
+func (p *requestPane) setRequest(req model.Request) {
+	headerRows := make([]model.KV, 0, len(req.Headers))
+	for _, h := range req.Headers {
+		headerRows = append(headerRows, model.KV{Key: h.Name, Value: h.Value, Enabled: h.Enabled})
+	}
+	p.headers.SetRows(headerRows)
+	p.query.SetRows(req.Query)
+	p.body = vimtext.New(req.Body, false)
+	p.body.SetMode(vimtext.Normal)
+	p.bodyActive = false
+	p.bodyScroll = 0
+	p.selectTab(tabHeaders)
+}
+
 func (p *requestPane) selectTab(t int) {
 	p.tab = (t + len(tabNames)) % len(tabNames)
 	p.setFocused(p.focused)

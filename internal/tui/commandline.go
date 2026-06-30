@@ -14,9 +14,14 @@ import (
 
 // openCommandLine activates the bottom input for a ":" command or "/" search.
 func (m Model) openCommandLine(kind rune) Model {
+	return m.openCommandLineWith(kind, "")
+}
+
+func (m Model) openCommandLineWith(kind rune, value string) Model {
 	m.cmdActive = true
 	m.cmdKind = kind
-	m.cmd.SetValue("")
+	m.cmd.SetValue(value)
+	m.cmd.CursorEnd()
 	m.cmd.Focus()
 	return m
 }
@@ -55,8 +60,54 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	switch fields[0] {
 	case "q", "quit":
 		return m, tea.Quit
-	case "w", "write", "wq", "x":
-		m.statusMsg = "saving collections isn't implemented yet"
+	case "w", "write", "save":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :save name"
+			return m, nil
+		}
+		return m.saveCurrentRequest(fields[1]), nil
+	case "e", "edit", "open":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :open name"
+			return m, nil
+		}
+		return m.loadSavedRequest(fields[1]), nil
+	case "delete", "del", "rm":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :delete name"
+			return m, nil
+		}
+		if err := m.collectionStore.Delete(fields[1]); err != nil {
+			m.statusMsg = "delete failed: " + err.Error()
+		} else {
+			m.statusMsg = "deleted " + fields[1]
+			m.refreshCollections()
+		}
+	case "rename", "move", "mv":
+		if len(fields) < 3 {
+			m.statusMsg = "usage: :rename old new"
+			return m, nil
+		}
+		if err := m.collectionStore.Rename(fields[1], fields[2]); err != nil {
+			m.statusMsg = "rename failed: " + err.Error()
+		} else {
+			m.statusMsg = "renamed " + fields[1] + " → " + fields[2]
+			m.refreshCollections()
+		}
+	case "copy", "cp":
+		if len(fields) < 3 {
+			m.statusMsg = "usage: :copy old new"
+			return m, nil
+		}
+		if err := m.collectionStore.Copy(fields[1], fields[2]); err != nil {
+			m.statusMsg = "copy failed: " + err.Error()
+		} else {
+			m.statusMsg = "copied " + fields[1] + " → " + fields[2]
+			m.refreshCollections()
+		}
+	case "ls", "list":
+		m.refreshCollections()
+		m = m.setFocus(focusCollection)
 	case "method", "m":
 		if len(fields) > 1 {
 			want := strings.ToUpper(fields[1])
@@ -86,6 +137,54 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		m.statusMsg = "unknown command: " + fields[0]
 	}
 	return m, nil
+}
+
+func (m Model) saveCurrentRequest(name string) Model {
+	req := m.req
+	req.URL = m.url.Value()
+	req.Headers = m.reqPane.headersOut()
+	req.Query = m.reqPane.queryOut()
+	req.Body = m.reqPane.bodyOut()
+	req.Timeout = m.timeout
+	if err := m.collectionStore.Save(name, req); err != nil {
+		m.statusMsg = "save failed: " + err.Error()
+		return m
+	}
+	m.currentName = name
+	m.statusMsg = "saved " + name
+	m.refreshCollections()
+	return m
+}
+
+func (m Model) loadSavedRequest(name string) Model {
+	req, err := m.collectionStore.Load(name)
+	if err != nil {
+		m.statusMsg = "open failed: " + err.Error()
+		return m
+	}
+	m.req = req
+	m.url.SetValue(req.URL)
+	m.timeout = req.Timeout
+	m.methodIdx = 0
+	for i, meth := range model.Methods {
+		if meth == req.Method {
+			m.methodIdx = i
+			break
+		}
+	}
+	m.reqPane.setRequest(req)
+	m.currentName = name
+	m.statusMsg = "opened " + name
+	return m
+}
+
+func (m *Model) refreshCollections() {
+	items, err := m.collectionStore.List()
+	if err != nil {
+		m.statusMsg = "list failed: " + err.Error()
+		return
+	}
+	m.collectionPane.SetItems(items)
 }
 
 // setVariable handles ":set name=value" (value may contain spaces).

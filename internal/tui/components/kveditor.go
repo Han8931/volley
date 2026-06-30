@@ -53,6 +53,14 @@ func (e *KVEditor) CancelPending() {
 	e.pendG = false
 }
 
+// SetRows replaces the editor rows.
+func (e *KVEditor) SetRows(rows []model.KV) {
+	e.rows = append([]model.KV(nil), rows...)
+	e.cursor, e.col = 0, 0
+	e.editing = false
+	e.input.Blur()
+}
+
 // Rows returns the current rows (used to build the outgoing request).
 func (e KVEditor) Rows() []model.KV { return e.rows }
 

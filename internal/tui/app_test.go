@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tabularasa/volley/internal/model"
 )
@@ -35,26 +36,38 @@ func TestFocusNavigation(t *testing.T) {
 		t.Fatalf("initial focus = %v, want URL", base.focus)
 	}
 
-	// ctrl+w j moves down from URL into the request pane.
+	// ctrl+w j moves down from URL into the collections tree.
 	m := step(step(base, keyCtrlW), runes("j"))
-	if m.focus != focusRequest {
-		t.Errorf("ctrl+w j: focus = %v, want Request", m.focus)
+	if m.focus != focusCollection {
+		t.Errorf("ctrl+w j: focus = %v, want Collections", m.focus)
 	}
-	// ctrl+w l from request moves right to response.
+	// ctrl+w l moves collections -> request -> response.
+	m = step(step(m, keyCtrlW), runes("l"))
+	if m.focus != focusRequest {
+		t.Errorf("ctrl+w l: focus = %v, want Request", m.focus)
+	}
 	m = step(step(m, keyCtrlW), runes("l"))
 	if m.focus != focusResponse {
-		t.Errorf("ctrl+w l: focus = %v, want Response", m.focus)
+		t.Errorf("second ctrl+w l: focus = %v, want Response", m.focus)
 	}
 
-	// Arrow down from URL also reaches the request pane.
-	if got := step(base, keyDown).focus; got != focusRequest {
-		t.Errorf("down arrow: focus = %v, want Request", got)
+	// ctrl+w h and left arrow from the method/URL bar go directly to the tree.
+	if got := step(step(base, keyCtrlW), runes("h")).focus; got != focusCollection {
+		t.Errorf("ctrl+w h from URL: focus = %v, want Collections", got)
 	}
-	// Tab cycles URL -> Request.
-	if got := step(base, keyTab).focus; got != focusRequest {
-		t.Errorf("tab: focus = %v, want Request", got)
+	if got := step(base, tea.KeyMsg{Type: tea.KeyLeft}).focus; got != focusCollection {
+		t.Errorf("left arrow from URL: focus = %v, want Collections", got)
 	}
-	// Plain j from the URL bar drops into the request pane.
+
+	// Arrow down from URL also reaches the collections tree.
+	if got := step(base, keyDown).focus; got != focusCollection {
+		t.Errorf("down arrow: focus = %v, want Collections", got)
+	}
+	// Tab cycles URL -> Collections.
+	if got := step(base, keyTab).focus; got != focusCollection {
+		t.Errorf("tab: focus = %v, want Collections", got)
+	}
+	// Plain j from the URL bar drops into the request pane for quick editing.
 	if got := step(base, runes("j")).focus; got != focusRequest {
 		t.Errorf("j from URL: focus = %v, want Request", got)
 	}
@@ -230,6 +243,36 @@ func TestEnterSendsAndGoesInFlight(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("Enter should return a command")
+	}
+}
+
+func TestLayoutFitsWindow(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	out := m.View()
+	if got := lipgloss.Width(out); got > 120 {
+		t.Fatalf("view width = %d, want <= 120\n%s", got, out)
+	}
+	if got := lipgloss.Height(out); got > 40 {
+		t.Fatalf("view height = %d, want <= 40\n%s", got, out)
+	}
+}
+
+func TestToggleCollectionTree(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = m.setFocus(focusCollection)
+	m = step(step(m, runes(",")), runes("n"))
+	if m.collectionShown {
+		t.Fatal(",n should hide the collections tree")
+	}
+	if m.focus == focusCollection {
+		t.Fatal("hiding the tree should move focus out of the collections pane")
+	}
+	if got := step(m, tea.KeyMsg{Type: tea.KeyLeft}).focus; got == focusCollection {
+		t.Fatal("left focus should not enter hidden tree")
+	}
+	m = step(step(m, runes(",")), runes("n"))
+	if !m.collectionShown {
+		t.Fatal("second ,n should show the collections tree")
 	}
 }
 

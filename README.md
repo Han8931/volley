@@ -30,7 +30,17 @@ go run .          # or: go build -o volley . && ./volley
 | `esc`          | leave INSERT, back to NORMAL                     |
 | `h`/`l`         | previous / next HTTP method (URL focused)        |
 | `m`            | next HTTP method (URL focused)                    |
+| `,n`           | show / hide collections tree                    |
 | `q`            | quit                                            |
+| **Collections pane** |                                            |
+| `j/k` · `gg`/`G` | move selection · first/last saved request       |
+| `enter`/`l`/`o` | open request or toggle folder                    |
+| `h`             | collapse folder                                  |
+| `m`             | open NerdTree-style menu                         |
+| `,n`            | show / hide tree pane                            |
+| `m a`           | add/save current request                         |
+| `m r` / `m c`   | rename / copy selected request                   |
+| `m d` / `dd`/`dj` | delete selected request                        |
 | **Request pane** |                                               |
 | `[` / `]` · `H`/`L` | previous / next tab (Headers · Body · Query) |
 | `j/k` · `gg`/`G` | move between rows · first/last row             |
@@ -51,10 +61,19 @@ go run .          # or: go build -o volley . && ./volley
 
 | Command            | Effect                                            |
 |--------------------|---------------------------------------------------|
+| `:save users/list` | save the current request                          |
+| `:open users/list` | open a saved request                              |
+| `:delete users/list` | delete a saved request                          |
+| `:rename old new`  | rename a saved request                            |
+| `:copy old new`    | copy a saved request                              |
+| `:ls`              | focus/refresh the collections tree                |
 | `:method POST`     | set the HTTP method                               |
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
 | `:timeout 10s`     | set the request timeout                           |
 | `:help` · `:q`     | help overlay · quit                               |
+
+Saved requests are stored as JSON under `~/.config/volley/collections/`.
+Use slash-separated names like `auth/login` to organize them into folders.
 
 `{{name}}` placeholders in the URL, headers, query, and body are expanded at
 send time — resolved from `:set` variables first, then process environment

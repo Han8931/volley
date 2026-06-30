@@ -14,6 +14,7 @@ var helpSections = []struct {
 		{"⏎", "send request"},
 		{":", "command line"},
 		{"?", "toggle this help"},
+		{",n", "show / hide collections tree"},
 		{"q / :q", "quit"},
 	}},
 	{"URL bar", [][2]string{
@@ -21,6 +22,16 @@ var helpSections = []struct {
 		{"h / l", "previous / next HTTP method"},
 		{"m", "next HTTP method"},
 		{"esc", "leave insert mode"},
+	}},
+	{"Collections / NerdTree", [][2]string{
+		{"j / k  ·  gg / G", "move selection"},
+		{"o / enter / l", "open request or toggle folder"},
+		{"h", "collapse folder"},
+		{"m", "open tree menu"},
+		{",n", "show / hide tree pane"},
+		{"m a", "add/save current request"},
+		{"m r  ·  m c", "rename / copy selected request"},
+		{"m d  ·  dd", "delete selected request"},
 	}},
 	{"Request pane", [][2]string{
 		{"H / L  ·  [ / ]", "switch tab (Headers·Body·Query)"},
@@ -46,6 +57,11 @@ var helpSections = []struct {
 		{"y", "yank body to clipboard"},
 	}},
 	{"Command line", [][2]string{
+		{":save users/list", "save current request"},
+		{":open users/list", "open saved request"},
+		{":delete users/list", "delete saved request"},
+		{":rename old new", "rename saved request"},
+		{":copy old new", "copy saved request"},
 		{":method POST", "set HTTP method"},
 		{":set tok=abc", "define a {{tok}} variable"},
 		{":timeout 10s", "set request timeout"},

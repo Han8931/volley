@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/model"
 	"github.com/tabularasa/volley/internal/vars"
 )
@@ -20,6 +21,7 @@ type focus int
 
 const (
 	focusURL focus = iota
+	focusCollection
 	focusRequest
 	focusResponse
 )
@@ -37,6 +39,11 @@ type Model struct {
 
 	reqPane requestPane
 
+	collectionStore collections.Store
+	collectionPane  collectionPane
+	collectionShown bool
+	currentName     string
+
 	vars    vars.Store
 	timeout time.Duration
 
@@ -52,6 +59,7 @@ type Model struct {
 	pendingG    bool   // for the "gg" motion in the response viewport
 
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
+	pendingComma  bool // for leader-style commands, currently ",n" tree toggle
 
 	// command line (":" commands and "/" search)
 	cmd       textinput.Model
@@ -63,8 +71,10 @@ type Model struct {
 	searchHits  []int // line offsets containing a match
 	searchIdx   int
 
-	showHelp  bool
-	statusMsg string // ephemeral feedback shown in the status bar
+	showHelp bool
+
+	collectionMenu bool   // NERDTree-like "m" filesystem menu is awaiting a key
+	statusMsg      string // ephemeral feedback shown in the status bar
 }
 
 // New builds the root model with a blank request ready to edit.
@@ -82,14 +92,20 @@ func New() Model {
 	cmd := textinput.New()
 	cmd.Prompt = ""
 
+	store := collections.DefaultStore()
+	items, _ := store.List()
+
 	return Model{
-		req:     model.NewRequest(),
-		url:     ti,
-		spin:    sp,
-		vp:      vp,
-		cmd:     cmd,
-		reqPane: newRequestPane(),
-		vars:    vars.New(),
+		req:             model.NewRequest(),
+		url:             ti,
+		spin:            sp,
+		vp:              vp,
+		cmd:             cmd,
+		reqPane:         newRequestPane(),
+		collectionStore: store,
+		collectionPane:  newCollectionPane(items),
+		collectionShown: true,
+		vars:            vars.New(),
 	}
 }
 
@@ -134,6 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		l := m.computeLayout()
 		m.vp.Width = l.respInnerW
 		m.vp.Height = l.respViewportH
+		m.collectionPane.width = l.collectionInnerW
 		m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
 		return m, nil
 
@@ -147,6 +164,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.cmdActive {
 			return m.updateCommandLine(msg)
+		}
+		if m.collectionMenu {
+			return m.updateCollectionMenu(msg)
 		}
 		if m.editing() {
 			return m.routeEditing(msg)
@@ -200,6 +220,15 @@ func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear transient feedback on the next keystroke
 
+	// Leader-style shortcuts.
+	if m.pendingComma {
+		m.pendingComma = false
+		if msg.String() == "n" {
+			return m.toggleCollectionPane(), nil
+		}
+		return m, nil
+	}
+
 	// Vim window-navigation chord: "ctrl+w" then h/j/k/l (or w to cycle).
 	if m.pendingWindow {
 		m.pendingWindow = false
@@ -213,7 +242,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "l":
 			return m.setFocus(m.focusRight()), nil
 		case "w":
-			return m.setFocus((m.focus + 1) % 3), nil
+			return m.setFocus((m.focus + 1) % 4), nil
 		}
 		return m, nil // anything else cancels the chord
 	}
@@ -239,6 +268,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+w":
 		m.pendingWindow = true
 		return m, nil
+	case ",":
+		m.pendingComma = true
+		m.statusMsg = "leader: n toggle tree"
+		return m, nil
 	// Arrow keys also move focus directionally — reliable everywhere, and a
 	// fallback for the Vim-style ctrl+h/j/k/l which collide with terminal
 	// control codes (ctrl+h = Backspace, ctrl+j = Enter).
@@ -251,9 +284,9 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up":
 		return m.setFocus(m.focusUp()), nil
 	case "tab":
-		return m.setFocus((m.focus + 1) % 3), nil
+		return m.setFocus((m.focus + 1) % 4), nil
 	case "shift+tab":
-		return m.setFocus((m.focus + 2) % 3), nil
+		return m.setFocus((m.focus + 3) % 4), nil
 	case "q":
 		return m, tea.Quit
 	case "enter":
@@ -263,6 +296,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case focusURL:
 		return m.updateURLNormal(msg)
+	case focusCollection:
+		return m.updateCollectionNormal(msg)
 	case focusRequest:
 		cmd := m.reqPane.updateNormal(msg)
 		return m, cmd
@@ -288,6 +323,81 @@ func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setFocus(focusRequest), nil
 	case "L":
 		return m.setFocus(focusResponse), nil
+	}
+	return m, nil
+}
+
+func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "m" {
+		m.collectionMenu = true
+		m.statusMsg = "NERDTree menu: a add/save · o open · r rename · c copy · d delete · q cancel"
+		return m, nil
+	}
+	switch m.collectionPane.updateNormal(msg) {
+	case "open":
+		if it, ok := m.collectionPane.selected(); ok {
+			return m.loadSavedRequest(it.Name), nil
+		}
+	case "delete":
+		if it, ok := m.collectionPane.selected(); ok {
+			if err := m.collectionStore.Delete(it.Name); err != nil {
+				m.statusMsg = "delete failed: " + err.Error()
+			} else {
+				m.statusMsg = "deleted " + it.Name
+				m.refreshCollections()
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m Model) toggleCollectionPane() Model {
+	m.collectionShown = !m.collectionShown
+	if !m.collectionShown && m.focus == focusCollection {
+		m = m.setFocus(focusRequest)
+	}
+	if m.collectionShown {
+		m.statusMsg = "tree shown"
+	} else {
+		m.statusMsg = "tree hidden"
+	}
+	return m
+}
+
+func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.collectionMenu = false
+	selected := ""
+	if it, ok := m.collectionPane.selected(); ok {
+		selected = it.Name
+	}
+	switch msg.String() {
+	case "q", "esc":
+		m.statusMsg = ""
+	case "a":
+		m = m.openCommandLineWith(':', "save ")
+	case "o":
+		if selected != "" {
+			return m.loadSavedRequest(selected), nil
+		}
+	case "d":
+		if selected != "" {
+			if err := m.collectionStore.Delete(selected); err != nil {
+				m.statusMsg = "delete failed: " + err.Error()
+			} else {
+				m.statusMsg = "deleted " + selected
+				m.refreshCollections()
+			}
+		}
+	case "r":
+		if selected != "" {
+			m = m.openCommandLineWith(':', "rename "+selected+" ")
+		}
+	case "c":
+		if selected != "" {
+			m = m.openCommandLineWith(':', "copy "+selected+" ")
+		}
+	default:
+		m.statusMsg = "unknown tree menu key: " + msg.String()
 	}
 	return m, nil
 }
@@ -341,32 +451,51 @@ func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // setFocus updates focus and keeps the request pane's highlight in sync.
 func (m Model) setFocus(f focus) Model {
+	if f == focusCollection && !m.collectionShown {
+		f = focusRequest
+	}
 	m.focus = f
+	m.collectionPane.focused = f == focusCollection
 	m.reqPane.setFocused(f == focusRequest)
 	return m
 }
 
 // focus movement helpers — the layout is URL on top, Request left, Response right.
 func (m Model) focusLeft() focus {
-	if m.focus == focusResponse {
+	switch m.focus {
+	case focusURL:
+		if m.collectionShown {
+			return focusCollection
+		}
+	case focusResponse:
 		return focusRequest
+	case focusRequest:
+		if m.collectionShown {
+			return focusCollection
+		}
 	}
 	return m.focus
 }
 func (m Model) focusRight() focus {
-	if m.focus == focusRequest || m.focus == focusURL {
+	switch m.focus {
+	case focusCollection:
+		return focusRequest
+	case focusRequest, focusURL:
 		return focusResponse
 	}
 	return m.focus
 }
 func (m Model) focusUp() focus {
-	if m.focus == focusRequest || m.focus == focusResponse {
+	if m.focus == focusCollection || m.focus == focusRequest || m.focus == focusResponse {
 		return focusURL
 	}
 	return m.focus
 }
 func (m Model) focusDown() focus {
 	if m.focus == focusURL {
+		if m.collectionShown {
+			return focusCollection
+		}
 		return focusRequest
 	}
 	return m.focus
