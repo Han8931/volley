@@ -189,7 +189,7 @@ func (p *collectionPane) updateNormal(msg tea.KeyMsg) (action string) {
 // setExpandedRecursive opens/closes a folder and all of its descendants.
 func (p *collectionPane) setExpandedRecursive(path string, open bool) {
 	for k := range p.expanded {
-		if k == path || strings.HasPrefix(k, path+"/") {
+		if path == "" || k == path || strings.HasPrefix(k, path+"/") {
 			p.expanded[k] = open
 		}
 	}
@@ -233,13 +233,7 @@ func (p collectionPane) view() string {
 	}
 	header := []string{
 		title("COLLECTIONS"),
-		dim("▾ " + rootLabel),
-	}
-	if len(p.items) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left, append(header,
-			"",
-			dim("empty — ")+keyHint("m a")+dim(" add request · ")+keyHint("m g")+dim(" new group"),
-		)...)
+		dim("root: " + rootLabel),
 	}
 
 	lines := header
@@ -260,6 +254,12 @@ func (p collectionPane) view() string {
 			st = st.Foreground(colAccent) // groups stand out
 		}
 		lines = append(lines, st.Render(text))
+	}
+	if len(p.items) == 0 {
+		lines = append(lines,
+			"",
+			dim("empty — with root selected, ")+keyHint("m g")+dim(" creates a top-level group"),
+		)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -299,7 +299,16 @@ func (p collectionPane) rows() []treeRow {
 		parent.files = append(parent.files, it.Name)
 	}
 
-	var out []treeRow
+	rootOpen := p.expanded[""]
+	rootIcon := "▸"
+	if rootOpen {
+		rootIcon = "▾"
+	}
+	out := []treeRow{{label: rootIcon + " /", name: "", depth: 0, open: rootOpen}}
+	if !rootOpen {
+		return out
+	}
+
 	var walk func(n *node, depth int)
 	walk = func(n *node, depth int) {
 		dirs := make([]string, 0, len(n.dirs))
@@ -325,6 +334,6 @@ func (p collectionPane) rows() []treeRow {
 			out = append(out, treeRow{label: "  " + parts[len(parts)-1], name: f, depth: depth, file: true})
 		}
 	}
-	walk(root, 0)
+	walk(root, 1)
 	return out
 }

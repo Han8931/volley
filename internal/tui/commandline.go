@@ -46,7 +46,7 @@ func (m Model) commandGhost() string {
 	switch {
 	case strings.HasSuffix(v, "/"):
 		return "<name>"
-	case v == "save " || v == "w " || v == "write ":
+	case v == "save " || v == "w " || v == "write " || v == "new ":
 		return "<group>/<name>"
 	case v == "open " || v == "e " || v == "edit " || v == "delete " || v == "del " || v == "rm ":
 		return "<group>/<name>"
@@ -90,12 +90,17 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	switch fields[0] {
 	case "q", "quit":
 		return m, tea.Quit
-	case "w", "write", "save":
-		if len(fields) < 2 {
-			m.statusMsg = "usage: :save name"
-			return m, nil
+	case "new", "enew":
+		if len(fields) > 1 {
+			return m.newSavedRequest(fields[1]), nil
 		}
-		return m.saveCurrentRequest(fields[1]), nil
+		return m.newBlankRequest(), nil
+	case "w", "write", "save":
+		name := ""
+		if len(fields) > 1 {
+			name = fields[1]
+		}
+		return m.saveCurrentRequest(name), nil
 	case "e", "edit", "open":
 		if len(fields) < 2 {
 			m.statusMsg = "usage: :open name"
@@ -184,6 +189,7 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 				m.statusMsg = "bad duration: " + fields[1]
 			} else {
 				m.timeout = d
+				m.timeoutInput.SetValue(d.String())
 				m.statusMsg = "timeout set to " + d.String()
 			}
 		}
@@ -195,7 +201,33 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) newBlankRequest() Model {
+	m = m.applyRequest(model.NewRequest())
+	m.currentName = ""
+	m.statusMsg = "new request"
+	return m
+}
+
+func (m Model) newSavedRequest(name string) Model {
+	m = m.applyRequest(model.NewRequest())
+	m.currentName = name
+	if err := m.collectionStore.Save(name, m.req); err != nil {
+		m.statusMsg = "create request failed: " + err.Error()
+		return m
+	}
+	m.statusMsg = "created " + name + " — edit URL, then :save"
+	m.refreshCollections()
+	return m
+}
+
 func (m Model) saveCurrentRequest(name string) Model {
+	if name == "" {
+		name = m.currentName
+	}
+	if name == "" {
+		m.statusMsg = "usage: :save name"
+		return m
+	}
 	req := m.req
 	req.URL = m.url.Value()
 	req.Headers = m.reqPane.headersOut()
@@ -217,6 +249,7 @@ func (m Model) applyRequest(req model.Request) Model {
 	m.req = req
 	m.url.SetValue(req.URL)
 	m.timeout = req.Timeout
+	m.timeoutInput.SetValue(formatTimeout(req.Timeout))
 	m.methodIdx = 0
 	for i, meth := range model.Methods {
 		if meth == req.Method {
@@ -226,6 +259,33 @@ func (m Model) applyRequest(req model.Request) Model {
 	}
 	m.reqPane.setRequest(req)
 	return m
+}
+
+func (m Model) commitTimeoutInput() Model {
+	m.timeoutInput.Blur()
+	v := strings.TrimSpace(m.timeoutInput.Value())
+	if v == "" {
+		m.timeout = 0
+		m.statusMsg = "timeout reset to default"
+		return m
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		m.timeoutInput.SetValue(formatTimeout(m.timeout))
+		m.statusMsg = "bad timeout: use values like 500ms, 10s, 2m"
+		return m
+	}
+	m.timeout = d
+	m.timeoutInput.SetValue(d.String())
+	m.statusMsg = "timeout set to " + d.String()
+	return m
+}
+
+func formatTimeout(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
 }
 
 func (m Model) loadSavedRequest(name string) Model {

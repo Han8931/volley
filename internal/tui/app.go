@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tabularasa/volley/internal/collections"
+	"github.com/tabularasa/volley/internal/httpx"
 	"github.com/tabularasa/volley/internal/model"
 	"github.com/tabularasa/volley/internal/vars"
 )
@@ -35,9 +36,10 @@ type Model struct {
 
 	focus focus
 
-	req       model.Request
-	url       textinput.Model
-	methodIdx int
+	req          model.Request
+	url          textinput.Model
+	timeoutInput textinput.Model
+	methodIdx    int
 
 	reqPane requestPane
 
@@ -101,6 +103,11 @@ func New() Model {
 	vp := viewport.New(0, 0)
 	vp.KeyMap = vimViewportKeys()
 
+	timeoutInput := textinput.New()
+	timeoutInput.Placeholder = httpx.DefaultTimeout.String()
+	timeoutInput.Prompt = ""
+	timeoutInput.CharLimit = 12
+
 	cmd := textinput.New()
 	cmd.Prompt = ""
 
@@ -110,6 +117,7 @@ func New() Model {
 	return Model{
 		req:             model.NewRequest(),
 		url:             ti,
+		timeoutInput:    timeoutInput,
 		spin:            sp,
 		vp:              vp,
 		cmd:             cmd,
@@ -136,7 +144,7 @@ func vimViewportKeys() viewport.KeyMap {
 // editing reports whether a child field is capturing keys (insert OR a
 // field-level Vim normal mode). This gates pane navigation.
 func (m Model) editing() bool {
-	if m.url.Focused() {
+	if m.url.Focused() || m.timeoutInput.Focused() {
 		return true
 	}
 	return m.focus == focusRequest && m.reqPane.editing()
@@ -145,7 +153,7 @@ func (m Model) editing() bool {
 // inInsert reports whether the active field is actually inserting text, for
 // the INSERT/NORMAL status tag (a field can be captured but in Vim-normal).
 func (m Model) inInsert() bool {
-	if m.url.Focused() {
+	if m.url.Focused() || m.timeoutInput.Focused() {
 		return true
 	}
 	return m.focus == focusRequest && m.reqPane.inInsert()
@@ -225,6 +233,14 @@ func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.url, cmd = m.url.Update(msg)
 		m.req.URL = m.url.Value()
+		return m, cmd
+	}
+	if m.timeoutInput.Focused() {
+		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEnter {
+			return m.commitTimeoutInput(), nil
+		}
+		var cmd tea.Cmd
+		m.timeoutInput, cmd = m.timeoutInput.Update(msg)
 		return m, cmd
 	}
 	cmd := m.reqPane.updateEditing(msg)
@@ -330,6 +346,10 @@ func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.url.Focus()
 		m.url.CursorEnd()
 		return m, textinput.Blink
+	case "t":
+		m.timeoutInput.Focus()
+		m.timeoutInput.CursorEnd()
+		return m, textinput.Blink
 	case "h":
 		return m.cycleMethod(-1), nil
 	case "l", "m":
@@ -354,7 +374,7 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.loadSavedRequest(it.Name), nil
 		}
 	case "delete":
-		if row, ok := m.collectionPane.current(); ok {
+		if row, ok := m.collectionPane.current(); ok && row.name != "" {
 			m = m.askDeleteConfirm(row.name, !row.file)
 		}
 	case "refresh":
@@ -452,7 +472,7 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc":
 		m.statusMsg = ""
 	case "a": // add a request (defaults into the current group)
-		m = m.openCommandLineWith(':', "save "+prefix)
+		m = m.openCommandLineWith(':', "new "+prefix)
 	case "g": // create a new group (nested under the current group)
 		m = m.openCommandLineWith(':', "mkgroup "+prefix)
 	case "o":
@@ -460,13 +480,13 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.loadSavedRequest(name), nil
 		}
 	case "d":
-		if have {
+		if have && name != "" {
 			m = m.askDeleteConfirm(name, onDir)
 		}
 	case "r", "m": // rename request or group
-		if have && onDir {
+		if have && onDir && name != "" {
 			m = m.openCommandLineWith(':', "rengroup "+name+" ")
-		} else if have {
+		} else if have && !onDir {
 			m = m.openCommandLineWith(':', "rename "+name+" ")
 		}
 	case "c":

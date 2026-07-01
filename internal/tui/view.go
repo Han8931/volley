@@ -74,6 +74,18 @@ func (m Model) viewURLBar(l layout) string {
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
 }
 
+func (m Model) viewOptionsBar(l layout) string {
+	timeoutView := m.timeoutInput.View()
+	if !m.timeoutInput.Focused() && m.timeoutInput.Value() == "" {
+		timeoutView = lipgloss.NewStyle().Foreground(colDim).Render(m.timeoutInput.Placeholder)
+	}
+	inner := lipgloss.JoinHorizontal(lipgloss.Left,
+		title("OPTIONS"),
+		dim(" timeout "), timeoutView,
+	)
+	return m.paneStyle(focusURL, l.respInnerW, 1).Render(inner)
+}
+
 func (m Model) viewMain(l layout) string {
 	right := lipgloss.JoinVertical(lipgloss.Left,
 		m.viewURLBar(l),
@@ -90,10 +102,13 @@ func (m Model) viewMain(l layout) string {
 
 func (m Model) viewBody(l layout) string {
 	request := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
-	response := m.paneStyle(focusResponse, l.respInnerW, l.bodyInnerH).Render(m.viewResponseInner())
+	responseColumn := lipgloss.JoinVertical(lipgloss.Left,
+		m.viewOptionsBar(l),
+		m.paneStyle(focusResponse, l.respInnerW, l.respInnerH).Render(m.viewResponseInner()),
+	)
 	gap := strings.Repeat(" ", l.gap)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, response)
+	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, responseColumn)
 }
 
 // viewResponseInner is the content placed inside the response pane: a status
@@ -150,7 +165,7 @@ func (m Model) viewStatusBar() string {
 	case m.pendingWindow:
 		hints = " window: h/j/k/l pick a pane"
 	case m.focus == focusURL:
-		hints = " h/l method · [/] request tabs · j move · i edit URL · ⏎ send · ? help"
+		hints = " h/l method · i edit URL · t edit timeout · [/] request tabs · ⏎ send · ? help"
 	case m.focus == focusCollection:
 		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:

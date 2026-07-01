@@ -56,11 +56,12 @@ func TestTreeShowsEmptyAndNestedGroups(t *testing.T) {
 		file  bool
 		depth int
 	}{
-		{"APISet1", false, 0},
-		{"APISet1/auth", false, 1},
-		{"APISet1/auth/login", true, 2},
-		{"APISet1/getUsers", true, 1},
-		{"APISet2", false, 0}, // empty group still shown
+		{"", false, 0}, // root group for top-level actions
+		{"APISet1", false, 1},
+		{"APISet1/auth", false, 2},
+		{"APISet1/auth/login", true, 3},
+		{"APISet1/getUsers", true, 2},
+		{"APISet2", false, 1}, // empty group still shown
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("rows = %d, want %d: %+v", len(rows), len(want), rows)
@@ -80,10 +81,10 @@ func TestTreeRecursiveCollapseAndParentJump(t *testing.T) {
 	p := newCollectionPane(items, "")
 	p.focused = true
 
-	// Collapse "g" recursively -> only the top group row remains.
+	// Collapse "g" recursively -> root plus the top group row remain.
 	p.setExpandedRecursive("g", false)
-	if n := len(p.rows()); n != 1 {
-		t.Fatalf("after recursive collapse rows = %d, want 1", n)
+	if n := len(p.rows()); n != 2 {
+		t.Fatalf("after recursive collapse rows = %d, want 2", n)
 	}
 
 	// Re-expand and jump from a deep file to its parent folder.

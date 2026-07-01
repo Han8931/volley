@@ -63,7 +63,9 @@ go run .          # or: go build -o volley . && ./volley
 
 | Command            | Effect                                            |
 |--------------------|---------------------------------------------------|
+| `:new users/list`  | create/open a blank saved request                 |
 | `:save users/list` | save the current request                          |
+| `:save` / `:w`     | save back to the currently opened/created request |
 | `:open users/list` | open a saved request                              |
 | `:delete users/list` | delete a saved request                          |
 | `:rename old new`  | rename a saved request                            |
@@ -74,7 +76,7 @@ go run .          # or: go build -o volley . && ./volley
 | `:ls`              | focus/refresh the collections tree                |
 | `:method POST`     | set the HTTP method                               |
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
-| `:timeout 10s`     | set the request timeout                           |
+| `:timeout 10s`     | set the request timeout (or press `t` in URL pane)|
 | `:help` · `:q`     | help overlay · quit                               |
 
 Saved requests are stored as JSON under `~/.config/volley/collections/`.

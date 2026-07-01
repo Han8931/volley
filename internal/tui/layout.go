@@ -9,7 +9,8 @@ type layout struct {
 	reqInnerW        int
 	respInnerW       int
 	collectionInnerH int // tree pane height; spans URL + body area
-	bodyInnerH       int // inner height of the request/response panes
+	bodyInnerH       int // inner height of the request pane / whole lower area
+	respInnerH       int // inner height of the response pane, after options bar
 	respViewportH    int // scrollable body height inside the response pane
 }
 
@@ -66,12 +67,19 @@ func (m Model) computeLayout() layout {
 		collectionH = 1
 	}
 	bodyH := m.height - 1 - 3 - borderOverhead
-	if bodyH < 3 {
-		bodyH = 3
+	if bodyH < 6 {
+		bodyH = 6
+	}
+
+	// The response column has a 3-row bordered options bar above the response,
+	// reducing only the response pane, not the URL bar or request pane.
+	respH := bodyH - 3
+	if respH < 3 {
+		respH = 3
 	}
 
 	// Response pane reserves: status line (1) + tab bar (1) for the viewport.
-	vpH := bodyH - 2
+	vpH := respH - 2
 	if vpH < 1 {
 		vpH = 1
 	}
@@ -84,6 +92,7 @@ func (m Model) computeLayout() layout {
 		respInnerW:       respW,
 		collectionInnerH: collectionH,
 		bodyInnerH:       bodyH,
+		respInnerH:       respH,
 		respViewportH:    vpH,
 	}
 }

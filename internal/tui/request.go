@@ -268,7 +268,15 @@ func (p requestPane) tabContent() string {
 	}
 }
 
-var bodyCursorStyle = lipgloss.NewStyle().Reverse(true)
+var (
+	bodyCursorStyle = lipgloss.NewStyle().Reverse(true)
+	jsonKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#93C5FD"))
+	jsonStringStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
+	jsonNumberStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
+	jsonBoolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC"))
+	jsonNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
+	jsonPunctStyle  = lipgloss.NewStyle().Foreground(colDim)
+)
 
 // renderBody draws the visible window of the body buffer with a block cursor
 // when the editor is active.
@@ -278,6 +286,7 @@ func (p requestPane) renderBody() string {
 	showCursor := p.bodyActive
 
 	rows := make([]string, 0, p.bodyHeight)
+	highlightJSON := isLikelyJSONBody(p.body.Text())
 	for i := 0; i < p.bodyHeight; i++ {
 		li := p.bodyScroll + i
 		if li >= len(lines) {
@@ -286,9 +295,13 @@ func (p requestPane) renderBody() string {
 		}
 		if showCursor && li == cr {
 			rows = append(rows, renderCursorLine(lines[li], cc))
-		} else {
-			rows = append(rows, truncateRunes(lines[li], p.bodyWidth))
+			continue
 		}
+		line := truncateRunes(lines[li], p.bodyWidth)
+		if highlightJSON {
+			line = highlightJSONLine(line)
+		}
+		rows = append(rows, line)
 	}
 	return strings.Join(rows, "\n")
 }
@@ -307,6 +320,96 @@ func renderCursorLine(line string, col int) string {
 		after = string(r[col+1:])
 	}
 	return before + bodyCursorStyle.Render(at) + after
+}
+
+// isLikelyJSONBody reports whether body should receive lightweight JSON
+// highlighting. It intentionally keys off the first non-space character so
+// partially typed JSON still gets colored while editing.
+func isLikelyJSONBody(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
+// highlightJSONLine applies a small JSON lexer to one already-truncated line.
+// It is deliberately forgiving: invalid/incomplete JSON is still readable and
+// the editor remains dependency-free.
+func highlightJSONLine(line string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		switch c := line[i]; {
+		case c == '"':
+			end := scanJSONString(line, i)
+			tok := line[i:end]
+			if isJSONKey(line, end) {
+				b.WriteString(jsonKeyStyle.Render(tok))
+			} else {
+				b.WriteString(jsonStringStyle.Render(tok))
+			}
+			i = end
+		case strings.ContainsRune("{}[]:,", rune(c)):
+			b.WriteString(jsonPunctStyle.Render(string(c)))
+			i++
+		case isJSONNumberStart(c):
+			end := scanJSONNumber(line, i)
+			b.WriteString(jsonNumberStyle.Render(line[i:end]))
+			i = end
+		case strings.HasPrefix(line[i:], "true"):
+			b.WriteString(jsonBoolStyle.Render("true"))
+			i += len("true")
+		case strings.HasPrefix(line[i:], "false"):
+			b.WriteString(jsonBoolStyle.Render("false"))
+			i += len("false")
+		case strings.HasPrefix(line[i:], "null"):
+			b.WriteString(jsonNullStyle.Render("null"))
+			i += len("null")
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+func scanJSONString(line string, start int) int {
+	for i := start + 1; i < len(line); i++ {
+		if line[i] == '\\' {
+			i++ // skip escaped byte; enough for UTF-8-safe display slices here
+			continue
+		}
+		if line[i] == '"' {
+			return i + 1
+		}
+	}
+	return len(line)
+}
+
+func isJSONKey(line string, stringEnd int) bool {
+	for i := stringEnd; i < len(line); i++ {
+		switch line[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case ':':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func isJSONNumberStart(c byte) bool { return c == '-' || (c >= '0' && c <= '9') }
+
+func scanJSONNumber(line string, start int) int {
+	i := start
+	for i < len(line) {
+		c := line[i]
+		if (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E' {
+			i++
+			continue
+		}
+		break
+	}
+	return i
 }
 
 // truncateRunes clips s to at most w runes (no horizontal scroll yet).
