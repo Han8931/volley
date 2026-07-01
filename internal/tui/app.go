@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/httpx"
@@ -170,8 +171,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		l := m.computeLayout()
 		m.vp.Width = l.respInnerW
 		m.vp.Height = l.respViewportH
+		m.url.Width = urlInputWidth(l)
 		m.collectionPane.width = l.collectionInnerW
 		m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
+		return m, nil
+
+	case tea.MouseMsg:
+		if m.sendButtonClicked(msg) {
+			return m.send()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -497,6 +505,22 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "" // ignore stray keys quietly
 	}
 	return m, nil
+}
+
+func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
+		return false
+	}
+	l := m.computeLayout()
+	paneX := 0
+	if m.collectionShown {
+		paneX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	buttonW := lipgloss.Width(m.sendButtonView())
+	buttonY := 1 // URL pane content row, below the top border.
+	buttonStartX := paneX + l.urlInnerW - buttonW
+	buttonEndX := paneX + l.urlInnerW - 1
+	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
 }
 
 func (m Model) cycleMethod(delta int) Model {

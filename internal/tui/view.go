@@ -17,6 +17,8 @@ var (
 	colSel    = lipgloss.Color("#2A2440")
 )
 
+const sendButtonText = " SEND "
+
 // View implements tea.Model.
 func (m Model) View() string {
 	if m.width == 0 {
@@ -65,13 +67,47 @@ func (m Model) viewURLBar(l layout) string {
 	method := lipgloss.NewStyle().Foreground(colMethod).Bold(true).
 		Render(fmt.Sprintf(" %-6s", m.req.Method))
 
+	urlW := urlInputWidth(l)
 	urlView := m.url.View()
 	if !m.url.Focused() && m.url.Value() == "" {
-		urlView = lipgloss.NewStyle().Foreground(colDim).Render(m.url.Placeholder)
+		urlView = lipgloss.NewStyle().Foreground(colDim).Render(truncateRunes(m.url.Placeholder, urlW))
+	} else if lipgloss.Width(urlView) > urlW {
+		urlView = truncateRunes(urlView, urlW)
 	}
 
-	inner := lipgloss.JoinHorizontal(lipgloss.Left, method, " │ ", urlView)
+	left := lipgloss.JoinHorizontal(lipgloss.Left, method, " │ ", urlView)
+	button := m.sendButtonView()
+	space := urlContentWidth(l) - lipgloss.Width(left) - lipgloss.Width(button)
+	if space < 1 {
+		space = 1
+	}
+	inner := lipgloss.JoinHorizontal(lipgloss.Left, left, strings.Repeat(" ", space), button)
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
+}
+
+func urlContentWidth(l layout) int {
+	w := l.urlInnerW - 2 // account for horizontal pane padding
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
+func urlInputWidth(l layout) int {
+	// Method label (7), separator (3), a gap before the button, and the button.
+	w := urlContentWidth(l) - 7 - 3 - 1 - len(sendButtonText)
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
+func (m Model) sendButtonView() string {
+	st := lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(colOK).Bold(true)
+	if m.sending || m.url.Value() == "" {
+		st = st.Foreground(colFg).Background(colDim)
+	}
+	return st.Render(sendButtonText)
 }
 
 func (m Model) viewOptionsBar(l layout) string {

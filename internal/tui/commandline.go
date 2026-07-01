@@ -90,6 +90,8 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	switch fields[0] {
 	case "q", "quit":
 		return m, tea.Quit
+	case "send":
+		return m.send()
 	case "new", "enew":
 		if len(fields) > 1 {
 			return m.newSavedRequest(fields[1]), nil
