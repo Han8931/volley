@@ -20,10 +20,40 @@ func (m Model) openCommandLine(kind rune) Model {
 func (m Model) openCommandLineWith(kind rune, value string) Model {
 	m.cmdActive = true
 	m.cmdKind = kind
+	if kind == '/' {
+		m.cmd.Placeholder = "search response…"
+	} else {
+		m.cmd.Placeholder = "e.g. save APISet1/getUsers · mkgroup APISet2 · method POST"
+	}
 	m.cmd.SetValue(value)
 	m.cmd.CursorEnd()
 	m.cmd.Focus()
 	return m
+}
+
+// commandGhost returns a dim template shown after the cursor to guide the user
+// while typing a ":" command — e.g. "<name>" after ":save APISet1/". It is
+// purely advisory (not inserted); it appears only when the cursor is at the end
+// of the input and a value is still expected.
+func (m Model) commandGhost() string {
+	if m.cmdKind != ':' {
+		return ""
+	}
+	v := m.cmd.Value()
+	if v == "" || m.cmd.Position() != len([]rune(v)) {
+		return ""
+	}
+	switch {
+	case strings.HasSuffix(v, "/"):
+		return "<name>"
+	case v == "save " || v == "w " || v == "write ":
+		return "<group>/<name>"
+	case v == "open " || v == "e " || v == "edit " || v == "delete " || v == "del " || v == "rm ":
+		return "<group>/<name>"
+	case v == "mkgroup " || v == "group " || v == "mkg " || v == "rmgroup " || v == "rmg ":
+		return "<group>"
+	}
+	return ""
 }
 
 func (m Model) closeCommandLine() Model {
@@ -77,12 +107,7 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			m.statusMsg = "usage: :delete name"
 			return m, nil
 		}
-		if err := m.collectionStore.Delete(fields[1]); err != nil {
-			m.statusMsg = "delete failed: " + err.Error()
-		} else {
-			m.statusMsg = "deleted " + fields[1]
-			m.refreshCollections()
-		}
+		m.deleteSaved(fields[1])
 	case "rename", "move", "mv":
 		if len(fields) < 3 {
 			m.statusMsg = "usage: :rename old new"
@@ -105,8 +130,39 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			m.statusMsg = "copied " + fields[1] + " → " + fields[2]
 			m.refreshCollections()
 		}
+	case "mkgroup", "group", "mkg":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :mkgroup name"
+			return m, nil
+		}
+		if err := m.collectionStore.CreateGroup(fields[1]); err != nil {
+			m.statusMsg = "create group failed: " + err.Error()
+		} else {
+			m.statusMsg = "created group " + fields[1]
+			m.refreshCollections()
+			m.collectionShown = true
+			m = m.setFocus(focusCollection)
+		}
+	case "rmgroup", "rmg":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :rmgroup name"
+			return m, nil
+		}
+		m.deleteGroup(fields[1])
+	case "rengroup", "reng":
+		if len(fields) < 3 {
+			m.statusMsg = "usage: :rengroup old new"
+			return m, nil
+		}
+		if err := m.collectionStore.RenameGroup(fields[1], fields[2]); err != nil {
+			m.statusMsg = "rename group failed: " + err.Error()
+		} else {
+			m.statusMsg = "renamed group " + fields[1] + " → " + fields[2]
+			m.refreshCollections()
+		}
 	case "ls", "list":
 		m.refreshCollections()
+		m.collectionShown = true // ensure the tree is visible before focusing it
 		m = m.setFocus(focusCollection)
 	case "method", "m":
 		if len(fields) > 1 {
@@ -156,12 +212,8 @@ func (m Model) saveCurrentRequest(name string) Model {
 	return m
 }
 
-func (m Model) loadSavedRequest(name string) Model {
-	req, err := m.collectionStore.Load(name)
-	if err != nil {
-		m.statusMsg = "open failed: " + err.Error()
-		return m
-	}
+// applyRequest loads a Request into the editor panes (URL, method, tabs).
+func (m Model) applyRequest(req model.Request) Model {
 	m.req = req
 	m.url.SetValue(req.URL)
 	m.timeout = req.Timeout
@@ -173,6 +225,16 @@ func (m Model) loadSavedRequest(name string) Model {
 		}
 	}
 	m.reqPane.setRequest(req)
+	return m
+}
+
+func (m Model) loadSavedRequest(name string) Model {
+	req, err := m.collectionStore.Load(name)
+	if err != nil {
+		m.statusMsg = "open failed: " + err.Error()
+		return m
+	}
+	m = m.applyRequest(req)
 	m.currentName = name
 	m.statusMsg = "opened " + name
 	return m

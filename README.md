@@ -4,7 +4,8 @@ A Vim-centric TUI API client and load tester — a terminal alternative to
 Postman, inspired by [posting](https://github.com/darrenburns/posting) but
 built for Vim users and high-concurrency load testing.
 
-**Status:** early development. Phase 1 (UI skeleton + modal editing) is in.
+**Status:** functional MVP — request/response, Vim body editor, and collections
+are in. Load testing is the next major feature.
 
 ## Stack
 
@@ -32,15 +33,16 @@ go run .          # or: go build -o volley . && ./volley
 | `m`            | next HTTP method (URL focused)                    |
 | `,n`           | show / hide collections tree                    |
 | `q`            | quit                                            |
-| **Collections pane** |                                            |
-| `j/k` · `gg`/`G` | move selection · first/last saved request       |
-| `enter`/`l`/`o` | open request or toggle folder                    |
-| `h`             | collapse folder                                  |
-| `m`             | open NerdTree-style menu                         |
-| `,n`            | show / hide tree pane                            |
-| `m a`           | add/save current request                         |
-| `m r` / `m c`   | rename / copy selected request                   |
-| `m d` / `dd`/`dj` | delete selected request                        |
+| **Collections pane (NerdTree)** |                                 |
+| `j/k` · `gg`/`G` · `P` | move selection · first/last · jump to top |
+| `enter`/`l`/`o` | open request or toggle group                     |
+| `O` / `X`       | expand / collapse group **recursively**          |
+| `h` · `p` · `x` | collapse group · jump to parent · close parent   |
+| `,n` · `R`      | show / hide tree · reload from disk              |
+| `m`             | open NerdTree-style menu (context-aware)         |
+| `m a` · `m g`   | add request into group · **new group**           |
+| `m r` · `m c`   | rename request/group · copy request              |
+| `m d` · `dd`    | delete request or group (asks `y/n` to confirm)  |
 | **Request pane** |                                               |
 | `[` / `]` · `H`/`L` | previous / next tab (Headers · Body · Query) |
 | `j/k` · `gg`/`G` | move between rows · first/last row             |
@@ -66,6 +68,9 @@ go run .          # or: go build -o volley . && ./volley
 | `:delete users/list` | delete a saved request                          |
 | `:rename old new`  | rename a saved request                            |
 | `:copy old new`    | copy a saved request                              |
+| `:mkgroup APISet1` | create a group (folder), even when empty          |
+| `:rmgroup APISet1` | delete a group and everything under it            |
+| `:rengroup old new`| rename a group                                    |
 | `:ls`              | focus/refresh the collections tree                |
 | `:method POST`     | set the HTTP method                               |
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
@@ -73,7 +78,9 @@ go run .          # or: go build -o volley . && ./volley
 | `:help` · `:q`     | help overlay · quit                               |
 
 Saved requests are stored as JSON under `~/.config/volley/collections/`.
-Use slash-separated names like `auth/login` to organize them into folders.
+Groups are folders: slash-separated names like `APISet1/auth/login` nest a
+request inside groups. Empty groups persist (they keep a `.keep` marker), while
+folders created implicitly by saving are cleaned up when their last request goes.
 
 `{{name}}` placeholders in the URL, headers, query, and body are expanded at
 send time — resolved from `:set` variables first, then process environment
@@ -85,5 +92,9 @@ variables (so `{{HOME}}`, secrets exported in your shell, etc. work).
 - [x] **Phase 2** — send request, render status + pretty-JSON response, Vim scroll
 - [x] **Phase 3** — request editor: tabbed headers / body / query, Vim KV editor
 - [x] **Phase 4** — `:` command line, `/` response search, `y` yank, `?` help overlay
-- [ ] Collections (posting-compatible storage)
+- [x] **Vim editing engine** (`internal/vimtext`) — motions, operators, counts, undo/redo, in the body editor
+- [x] **Collections** — save/open/rename/copy/delete, NerdTree-style tree pane (native JSON storage)
 - [ ] Load testing (concurrency, RPS, p50/p95/p99, live charts)
+
+> Note: collections are stored as native JSON under `~/.config/volley/collections/`.
+> Posting-format import/export is not implemented yet.

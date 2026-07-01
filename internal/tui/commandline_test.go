@@ -137,6 +137,27 @@ func TestResponseHeadersTab(t *testing.T) {
 	}
 }
 
+func TestCommandGhost(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	cases := []struct{ val, want string }{
+		{"save ", "<group>/<name>"},   // fresh save
+		{"save APISet1/", "<name>"},   // m a into a group
+		{"mkgroup ", "<group>"},       // m g new group
+		{"save APISet1/getUsers", ""}, // name already typed
+		{"open ", "<group>/<name>"},   // open needs a name
+	}
+	for _, c := range cases {
+		mm := m.openCommandLineWith(':', c.val)
+		if got := mm.commandGhost(); got != c.want {
+			t.Errorf("commandGhost(%q) = %q, want %q", c.val, got, c.want)
+		}
+	}
+	// Search has no command ghost.
+	if s := m.openCommandLineWith('/', "foo"); s.commandGhost() != "" {
+		t.Error("search kind should have no ghost")
+	}
+}
+
 func TestHelpToggle(t *testing.T) {
 	m := sized()
 	m = step(m, runes("?"))

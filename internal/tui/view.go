@@ -40,7 +40,11 @@ func (m Model) View() string {
 func (m Model) viewCommandLine() string {
 	prefix := lipgloss.NewStyle().Foreground(colAccent).Bold(true).
 		Render(string(m.cmdKind))
-	return lipgloss.NewStyle().Width(m.width).Render(prefix + m.cmd.View())
+	line := prefix + m.cmd.View()
+	if ghost := m.commandGhost(); ghost != "" {
+		line += lipgloss.NewStyle().Foreground(colDim).Italic(true).Render(ghost)
+	}
+	return lipgloss.NewStyle().Width(m.width).Render(line)
 }
 
 // paneStyle returns a bordered box, highlighted when focused.
@@ -147,12 +151,8 @@ func (m Model) viewStatusBar() string {
 		hints = " window: h/j/k/l pick a pane"
 	case m.focus == focusURL:
 		hints = " h/l method · [/] request tabs · j move · i edit URL · ⏎ send · ? help"
-	case m.pendingComma:
-		hints = " leader: n toggle tree"
-	case m.collectionMenu:
-		hints = " NERDTree menu: a add/save · o open · r rename · c copy · d delete · q cancel"
 	case m.focus == focusCollection:
-		hints = " collections: j/k move · o/l open/toggle · h collapse · m menu · ,n hide tree"
+		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
 		hints = " [/] tab · i edit body (Vim) · ^w/tab switch panes · ? help"
 	case m.focus == focusRequest:
@@ -165,7 +165,11 @@ func (m Model) viewStatusBar() string {
 	if m.statusMsg != "" {
 		hintStyle = hintStyle.Foreground(colOK)
 	}
-	hint := hintStyle.Width(m.width - lipgloss.Width(modeTag)).Render(hints)
+	hintW := m.width - lipgloss.Width(modeTag)
+	if hintW < 0 {
+		hintW = 0
+	}
+	hint := hintStyle.Width(hintW).Render(hints)
 
 	return lipgloss.JoinHorizontal(lipgloss.Left, modeTag, hint)
 }

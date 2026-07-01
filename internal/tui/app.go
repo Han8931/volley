@@ -3,6 +3,8 @@ package tui
 
 import (
 	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -74,7 +76,17 @@ type Model struct {
 	showHelp bool
 
 	collectionMenu bool   // NERDTree-like "m" filesystem menu is awaiting a key
+	confirmDelete  string // name of a request/group awaiting y/n delete confirmation
+	confirmGroup   bool   // whether confirmDelete refers to a group
 	statusMsg      string // ephemeral feedback shown in the status bar
+}
+
+// homeShorten replaces the user's home directory prefix with "~".
+func homeShorten(path string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 // New builds the root model with a blank request ready to edit.
@@ -103,7 +115,7 @@ func New() Model {
 		cmd:             cmd,
 		reqPane:         newRequestPane(),
 		collectionStore: store,
-		collectionPane:  newCollectionPane(items),
+		collectionPane:  newCollectionPane(items, homeShorten(store.Root)),
 		collectionShown: true,
 		vars:            vars.New(),
 	}
@@ -161,6 +173,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showHelp {
 			m.showHelp = false // any key dismisses help
 			return m, nil
+		}
+		if m.confirmDelete != "" {
+			return m.resolveDeleteConfirm(msg), nil
 		}
 		if m.cmdActive {
 			return m.updateCommandLine(msg)
@@ -242,7 +257,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "l":
 			return m.setFocus(m.focusRight()), nil
 		case "w":
-			return m.setFocus((m.focus + 1) % 4), nil
+			return m.cycleFocus(1), nil
 		}
 		return m, nil // anything else cancels the chord
 	}
@@ -284,13 +299,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up":
 		return m.setFocus(m.focusUp()), nil
 	case "tab":
-		return m.setFocus((m.focus + 1) % 4), nil
+		return m.cycleFocus(1), nil
 	case "shift+tab":
-		return m.setFocus((m.focus + 3) % 4), nil
+		return m.cycleFocus(-1), nil
 	case "q":
 		return m, tea.Quit
-	case "enter":
-		return m.send()
 	}
 
 	switch m.focus {
@@ -311,6 +324,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // cycle the HTTP method; j moves down into the request pane.
 func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "enter":
+		return m.send()
 	case "i", "a":
 		m.url.Focus()
 		m.url.CursorEnd()
@@ -330,7 +345,7 @@ func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "m" {
 		m.collectionMenu = true
-		m.statusMsg = "NERDTree menu: a add/save · o open · r rename · c copy · d delete · q cancel"
+		m.statusMsg = "NERDTree menu: a add req · g new group · o open · r rename · c copy · d delete · q cancel"
 		return m, nil
 	}
 	switch m.collectionPane.updateNormal(msg) {
@@ -339,16 +354,63 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.loadSavedRequest(it.Name), nil
 		}
 	case "delete":
-		if it, ok := m.collectionPane.selected(); ok {
-			if err := m.collectionStore.Delete(it.Name); err != nil {
-				m.statusMsg = "delete failed: " + err.Error()
-			} else {
-				m.statusMsg = "deleted " + it.Name
-				m.refreshCollections()
-			}
+		if row, ok := m.collectionPane.current(); ok {
+			m = m.askDeleteConfirm(row.name, !row.file)
 		}
+	case "refresh":
+		m.refreshCollections()
+		m.statusMsg = "reloaded collections"
 	}
 	return m, nil
+}
+
+// askDeleteConfirm arms a y/n confirmation before destroying a request or group.
+func (m Model) askDeleteConfirm(name string, isGroup bool) Model {
+	m.confirmDelete = name
+	m.confirmGroup = isGroup
+	if isGroup {
+		m.statusMsg = "delete group " + name + " and all its requests? (y/n)"
+	} else {
+		m.statusMsg = "delete " + name + "? (y/n)"
+	}
+	return m
+}
+
+// resolveDeleteConfirm handles the key pressed while a delete is pending.
+func (m Model) resolveDeleteConfirm(msg tea.KeyMsg) Model {
+	name, isGroup := m.confirmDelete, m.confirmGroup
+	m.confirmDelete, m.confirmGroup = "", false
+	if msg.String() != "y" {
+		m.statusMsg = "delete cancelled"
+		return m
+	}
+	if isGroup {
+		m.deleteGroup(name)
+	} else {
+		m.deleteSaved(name)
+	}
+	return m
+}
+
+// deleteSaved removes a saved request and refreshes the tree (shared by the
+// tree, the menu, and the ":delete" command).
+func (m *Model) deleteSaved(name string) {
+	if err := m.collectionStore.Delete(name); err != nil {
+		m.statusMsg = "delete failed: " + err.Error()
+		return
+	}
+	m.statusMsg = "deleted " + name
+	m.refreshCollections()
+}
+
+// deleteGroup removes a group and all requests under it.
+func (m *Model) deleteGroup(name string) {
+	if err := m.collectionStore.DeleteGroup(name); err != nil {
+		m.statusMsg = "delete group failed: " + err.Error()
+		return
+	}
+	m.statusMsg = "deleted group " + name
+	m.refreshCollections()
 }
 
 func (m Model) toggleCollectionPane() Model {
@@ -366,38 +428,53 @@ func (m Model) toggleCollectionPane() Model {
 
 func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.collectionMenu = false
-	selected := ""
-	if it, ok := m.collectionPane.selected(); ok {
-		selected = it.Name
+
+	// Establish the context: which node is under the cursor, and which group
+	// new requests should default into.
+	name, onDir, have := "", false, false
+	if row, ok := m.collectionPane.current(); ok {
+		name, onDir, have = row.name, !row.file, true
 	}
+	group := "" // the group a new sibling request/group belongs to
+	if have {
+		if onDir {
+			group = name
+		} else {
+			group = parentPath(name)
+		}
+	}
+	prefix := ""
+	if group != "" {
+		prefix = group + "/"
+	}
+
 	switch msg.String() {
 	case "q", "esc":
 		m.statusMsg = ""
-	case "a":
-		m = m.openCommandLineWith(':', "save ")
+	case "a": // add a request (defaults into the current group)
+		m = m.openCommandLineWith(':', "save "+prefix)
+	case "g": // create a new group (nested under the current group)
+		m = m.openCommandLineWith(':', "mkgroup "+prefix)
 	case "o":
-		if selected != "" {
-			return m.loadSavedRequest(selected), nil
+		if have && !onDir {
+			return m.loadSavedRequest(name), nil
 		}
 	case "d":
-		if selected != "" {
-			if err := m.collectionStore.Delete(selected); err != nil {
-				m.statusMsg = "delete failed: " + err.Error()
-			} else {
-				m.statusMsg = "deleted " + selected
-				m.refreshCollections()
-			}
+		if have {
+			m = m.askDeleteConfirm(name, onDir)
 		}
-	case "r":
-		if selected != "" {
-			m = m.openCommandLineWith(':', "rename "+selected+" ")
+	case "r", "m": // rename request or group
+		if have && onDir {
+			m = m.openCommandLineWith(':', "rengroup "+name+" ")
+		} else if have {
+			m = m.openCommandLineWith(':', "rename "+name+" ")
 		}
 	case "c":
-		if selected != "" {
-			m = m.openCommandLineWith(':', "copy "+selected+" ")
+		if have && !onDir {
+			m = m.openCommandLineWith(':', "copy "+name+" ")
 		}
 	default:
-		m.statusMsg = "unknown tree menu key: " + msg.String()
+		m.statusMsg = "" // ignore stray keys quietly
 	}
 	return m, nil
 }
@@ -411,7 +488,14 @@ func (m Model) cycleMethod(delta int) Model {
 
 // updateResponseNav handles Vim scroll motions in the response pane.
 func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// "gg" is the only two-key motion here; clear a stale pending 'g' for any
+	// other key so it can't later fire an unexpected GotoTop.
+	if msg.String() != "g" {
+		m.pendingG = false
+	}
 	switch msg.String() {
+	case "enter":
+		return m.send()
 	case "g":
 		if m.pendingG {
 			m.vp.GotoTop()
@@ -457,6 +541,20 @@ func (m Model) setFocus(f focus) Model {
 	m.focus = f
 	m.collectionPane.focused = f == focusCollection
 	m.reqPane.setFocused(f == focusRequest)
+	return m
+}
+
+// cycleFocus moves focus forward (dir=+1) or backward (dir=-1), skipping the
+// Collections pane while it is hidden so backward cycling can't get stuck.
+func (m Model) cycleFocus(dir int) Model {
+	f := m.focus
+	for i := 0; i < 4; i++ {
+		f = focus((int(f) + dir + 4) % 4)
+		if f == focusCollection && !m.collectionShown {
+			continue
+		}
+		return m.setFocus(f)
+	}
 	return m
 }
 
