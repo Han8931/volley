@@ -66,17 +66,24 @@ func (m Model) paneStyle(f focus, w, h int) lipgloss.Style {
 // renderURLField renders the URL bar's contents. When the bar is focused it
 // draws a reverse-video block cursor at the buffer's cursor column (in both
 // Insert and NORMAL modes), scrolling horizontally so the cursor stays visible;
-// otherwise it shows the text, or a dim placeholder when empty.
+// otherwise it shows the text, or a dim placeholder when empty. Text clipped
+// off either edge is flagged with ‹ / › (focused) or a trailing … (unfocused),
+// so a long URL never looks complete when it isn't. Markers replace an edge
+// cell rather than adding one, so the field never exceeds its width.
 func (m Model) renderURLField(width int) string {
-	text := m.url.Text()
+	runes := []rune(m.url.Text())
 	if m.focus != focusURL {
-		if text == "" {
+		if len(runes) == 0 {
 			return lipgloss.NewStyle().Foreground(colDim).Render(truncateRunes(urlPlaceholder, width))
 		}
-		return truncateRunes(text, width)
+		if width > 0 && len(runes) > width {
+			// First width-1 runes plus a … marker for the dropped tail.
+			return truncateRunes(m.url.Text(), width-1) + "…"
+		}
+		return m.url.Text()
 	}
+
 	_, col := m.url.Cursor()
-	runes := []rune(text)
 	start := 0
 	if width > 0 && col >= width {
 		start = col - width + 1
@@ -85,7 +92,18 @@ func (m Model) renderURLField(width int) string {
 	if width > 0 && end > start+width {
 		end = start + width
 	}
-	return renderCursorLine(string(runes[start:end]), col-start)
+
+	window := append([]rune(nil), runes[start:end]...)
+	cursorAt := col - start
+	// Overlay edge markers for hidden text, but never clobber the cursor cell —
+	// the block cursor itself already signals that edge.
+	if start > 0 && len(window) > 0 && cursorAt != 0 {
+		window[0] = '‹'
+	}
+	if end < len(runes) && len(window) > 0 && cursorAt != len(window)-1 {
+		window[len(window)-1] = '›'
+	}
+	return renderCursorLine(string(window), cursorAt)
 }
 
 // viewMethodPane renders the standalone HTTP-method selector to the left of the

@@ -178,6 +178,37 @@ func TestURLBarTypesDirectly(t *testing.T) {
 	}
 }
 
+// TestURLBarLongURLIndicators verifies a clipped long URL is flagged: … when
+// unfocused-truncated, and ‹ / › for text scrolled off an edge when focused.
+func TestURLBarLongURLIndicators(t *testing.T) {
+	const long = "https://api.example.com/v1/resource/12345?expand=orders"
+	const width = 20
+
+	// Unfocused: head shown, tail dropped behind a trailing … .
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetText(long)
+	m = m.setFocus(focusResponse) // focus off the URL bar
+	if got := m.renderURLField(width); !strings.HasSuffix(got, "…") || strings.Contains(got, "orders") {
+		t.Errorf("unfocused long URL = %q, want head + trailing … (no tail)", got)
+	}
+
+	// Focused with the cursor at the end (scrolled right): leading ‹ for the
+	// hidden head.
+	f := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	f.url.SetText(long) // cursor at end
+	if got := f.renderURLField(width); !strings.Contains(got, "‹") {
+		t.Errorf("focused, scrolled right = %q, want a leading ‹", got)
+	}
+
+	// Focused with the cursor at column 0: trailing › for the hidden tail.
+	f2 := urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
+	f2.url.SetText(long)
+	f2 = step(f2, runes("0")) // jump to the start in NORMAL
+	if got := f2.renderURLField(width); !strings.Contains(got, "›") {
+		t.Errorf("focused at start = %q, want a trailing ›", got)
+	}
+}
+
 // TestURLNormalModeVimEdits exercises real Vim editing in the URL bar's NORMAL
 // sub-mode: motions, delete, change-to-end, paste, and undo.
 func TestURLNormalModeVimEdits(t *testing.T) {
