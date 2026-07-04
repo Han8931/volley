@@ -90,8 +90,9 @@ Where a Vim TUI can feel *faster* than the GUIs.
 - [ ] **Request history** — ring of recent sends (method, URL, status, time),
       re-run or promote to a saved request. Persisted. **Why:** Postman history
       panel; great for exploratory work. **Effort: M.**
-- [ ] **Richer response views** — extend the Body/Headers tab bar (`respTabBar`)
-      with **Raw ↔ Pretty** toggle, a **Cookies** tab (parsed `Set-Cookie`), and
+- [ ] **Richer response views** — _Done: **Raw ↔ Pretty** toggle (`p`) on the
+      response Body tab, mode shown in `respTabBar`._ Still to do: extend
+      `respTabBar` with a **Cookies** tab (parsed `Set-Cookie`), and
       a **Timing** view (DNS / connect / TLS / TTFB via `httptrace`). Add
       syntax highlighting to the response body (reuse the JSON highlighter; add
       XML/HTML). **Why:** Postman's response inspector. **Effort: M.**

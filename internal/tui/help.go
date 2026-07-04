@@ -27,7 +27,7 @@ var helpSections = []struct {
 		{"⏎", "send request"},
 		{"tab / ^w", "move to another pane"},
 		{"esc", "NORMAL sub-mode (shortcuts below)"},
-		{"t", "focus / edit timeout (NORMAL)"},
+		{"t", "edit inline timeout (NORMAL)"},
 	}},
 	{"Collections / NerdTree", [][2]string{
 		{"j / k  ·  gg / G", "move selection  ·  P jump to top"},
@@ -58,6 +58,7 @@ var helpSections = []struct {
 	}},
 	{"Response pane", [][2]string{
 		{"[ / ]", "switch Body / Headers tab"},
+		{"p", "toggle raw / pretty JSON body"},
 		{"j / k", "scroll  ·  gg / G top / bottom"},
 		{"ctrl+d / ctrl+u", "half-page scroll"},
 		{"/", "search  ·  n / N next / prev"},

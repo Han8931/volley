@@ -27,7 +27,6 @@ type focus int
 const (
 	focusURL focus = iota
 	focusMethod
-	focusTimeout
 	focusCollection
 	focusRequest
 	focusResponse
@@ -35,13 +34,13 @@ const (
 
 // tabOrder is the sequence tab / shift+tab walk, following the screen's natural
 // reading order: the collections sidebar, the method + URL on the top row, then
-// the request pane, then the timeout bar above the response pane.
+// the request pane, then the response pane. Timeout is edited inline (t or
+// :timeout), not a tab stop.
 var tabOrder = []focus{
 	focusCollection,
 	focusMethod,
 	focusURL,
 	focusRequest,
-	focusTimeout,
 	focusResponse,
 }
 
@@ -89,6 +88,7 @@ type Model struct {
 	respTab     int    // 0 = body, 1 = headers
 	respText    string // rendered body, kept for search
 	respHeaders string // rendered headers
+	rawBody     bool   // show the body verbatim instead of pretty-printing JSON
 	pendingG    bool   // for the "gg" motion in the response viewport
 
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
@@ -144,6 +144,7 @@ func New() Model {
 	timeoutInput.Placeholder = httpx.DefaultTimeout.String()
 	timeoutInput.Prompt = ""
 	timeoutInput.CharLimit = 12
+	timeoutInput.Width = 7 // bounds the inline editor in the top bar
 
 	cmd := textinput.New()
 	cmd.Prompt = ""
@@ -262,7 +263,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resp = msg.resp
 		m.hasResp = true
 		m.respTab = 0
-		m.respText = renderResponseBody(msg.resp, m.vp.Width)
+		m.respText = renderResponseBody(msg.resp, m.vp.Width, m.rawBody)
 		m.respHeaders = renderResponseHeaders(msg.resp)
 		m.searchQuery, m.searchHits, m.searchIdx = "", nil, 0
 		m.vp.SetContent(m.currentResponseText())
@@ -398,8 +399,6 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateURLNormal(msg)
 	case focusMethod:
 		return m.updateMethodNormal(msg)
-	case focusTimeout:
-		return m.updateTimeoutNormal(msg)
 	case focusCollection:
 		return m.updateCollectionNormal(msg)
 	case focusRequest:
@@ -411,19 +410,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateTimeoutNormal handles NORMAL keys while the timeout field is focused
-// (but not yet editing). i/a/enter begin editing; pane moves are tab / ctrl+w.
-func (m Model) updateTimeoutNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "i", "a", "enter":
-		return m.beginEditTimeout(), textinput.Blink
-	}
-	return m, nil
-}
-
-// beginEditTimeout focuses the timeout field and its inline input for editing.
+// beginEditTimeout focuses the inline timeout editor in the top bar. Timeout is
+// no longer a pane/tab stop: keys route to it purely while its input is focused,
+// and committing (esc/enter) returns to whatever focus was active (the URL bar,
+// where t is invoked). The readout lives in the URL bar; see viewURLBar.
 func (m Model) beginEditTimeout() Model {
-	m = m.setFocus(focusTimeout)
 	m.timeoutInput.Focus()
 	m.timeoutInput.CursorEnd()
 	return m
@@ -649,6 +640,16 @@ func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.vp.GotoTop()
 		}
 		return m, nil
+	case "p":
+		// Toggle raw ↔ pretty for the JSON body view.
+		if m.hasResp && m.respTab == 0 {
+			m.rawBody = !m.rawBody
+			m.respText = renderResponseBody(m.resp, m.vp.Width, m.rawBody)
+			m.resetSearch()
+			m.vp.SetContent(m.currentResponseText())
+			m.vp.GotoTop()
+		}
+		return m, nil
 	case "/":
 		if m.hasResp {
 			return m.openCommandLine('/'), nil
@@ -725,9 +726,9 @@ func (m Model) cycleFocus(dir int) Model {
 	return m
 }
 
-// focus movement helpers — the top row is the Method selector then the URL bar;
-// below it the Request pane on the left and, on the right, a thin Timeout bar
-// stacked directly above the Response pane.
+// focus movement helpers — the top row is the Method selector then the URL bar
+// (which carries the inline timeout readout); below it the Request pane on the
+// left and the Response pane on the right.
 func (m Model) focusLeft() focus {
 	switch m.focus {
 	case focusURL:
@@ -736,7 +737,7 @@ func (m Model) focusLeft() focus {
 		if m.collectionShown {
 			return focusCollection
 		}
-	case focusResponse, focusTimeout:
+	case focusResponse:
 		return focusRequest
 	case focusRequest:
 		if m.collectionShown {
@@ -758,10 +759,8 @@ func (m Model) focusRight() focus {
 }
 func (m Model) focusUp() focus {
 	switch m.focus {
-	case focusResponse:
-		// The Timeout/options bar sits directly above the Response pane.
-		return focusTimeout
-	case focusTimeout, focusCollection, focusRequest:
+	case focusResponse, focusCollection, focusRequest:
+		// The top row (URL bar) spans above the request/response panes.
 		return focusURL
 	}
 	return m.focus
@@ -775,8 +774,6 @@ func (m Model) focusDown() focus {
 			return focusCollection
 		}
 		return focusRequest
-	case focusTimeout:
-		return focusResponse
 	}
 	return m.focus
 }

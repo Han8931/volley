@@ -11,7 +11,7 @@ type layout struct {
 	respInnerW       int
 	collectionInnerH int // tree pane height; spans URL + body area
 	bodyInnerH       int // inner height of the request pane / whole lower area
-	respInnerH       int // inner height of the response pane, after options bar
+	respInnerH       int // inner height of the response pane
 	respViewportH    int // scrollable body height inside the response pane
 }
 
@@ -82,12 +82,9 @@ func (m Model) computeLayout() layout {
 		bodyH = 6
 	}
 
-	// The response column has a 3-row bordered options bar above the response,
-	// reducing only the response pane, not the URL bar or request pane.
-	respH := bodyH - 3
-	if respH < 3 {
-		respH = 3
-	}
+	// The request and response panes are the same height now that the timeout
+	// options bar is gone (timeout moved inline into the URL bar).
+	respH := bodyH
 
 	// Response pane reserves: status line (1) + tab bar (1) for the viewport.
 	vpH := respH - 2

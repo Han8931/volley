@@ -81,12 +81,32 @@ func (m Model) viewURLBar(l layout) string {
 	}
 
 	button := m.sendButtonView()
-	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(button)
+	timeoutSeg := m.timeoutSegView()
+	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(timeoutSeg) - lipgloss.Width(button) - 1
 	if space < 1 {
 		space = 1
 	}
-	inner := lipgloss.JoinHorizontal(lipgloss.Left, urlView, strings.Repeat(" ", space), button)
+	inner := lipgloss.JoinHorizontal(lipgloss.Left, urlView, strings.Repeat(" ", space), timeoutSeg, " ", button)
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
+}
+
+// timeoutReserve is the horizontal budget the URL bar sets aside on its right
+// edge for the inline timeout readout/editor ("timeout " + a short value).
+const timeoutReserve = 16
+
+// timeoutSegView renders the inline timeout readout carried on the right of the
+// URL bar. When the field is being edited (via t or :timeout) it shows the live
+// input; otherwise the effective value, or the engine default when unset.
+func (m Model) timeoutSegView() string {
+	label := lipgloss.NewStyle().Foreground(colDim).Render("timeout ")
+	if m.timeoutInput.Focused() {
+		return label + m.timeoutInput.View()
+	}
+	val := formatTimeout(m.timeout)
+	if m.timeout <= 0 {
+		val = m.timeoutInput.Placeholder // engine default
+	}
+	return label + lipgloss.NewStyle().Foreground(colMethod).Render(val)
 }
 
 func urlContentWidth(l layout) int {
@@ -98,8 +118,9 @@ func urlContentWidth(l layout) int {
 }
 
 func urlInputWidth(l layout) int {
-	// The URL bar now holds only the input and the SEND button (a gap between).
-	w := urlContentWidth(l) - 1 - len(sendButtonText)
+	// The URL bar holds the input, the inline timeout readout, and the SEND
+	// button, with a one-cell gap before each of the trailing two.
+	w := urlContentWidth(l) - 1 - timeoutReserve - 1 - len(sendButtonText)
 	if w < 1 {
 		return 1
 	}
@@ -112,17 +133,6 @@ func (m Model) sendButtonView() string {
 		st = st.Foreground(colFg).Background(colDim)
 	}
 	return st.Render(sendButtonText)
-}
-
-func (m Model) viewOptionsBar(l layout) string {
-	timeoutView := m.timeoutInput.View()
-	if !m.timeoutInput.Focused() && m.timeoutInput.Value() == "" {
-		timeoutView = lipgloss.NewStyle().Foreground(colDim).Render(m.timeoutInput.Placeholder)
-	}
-	inner := lipgloss.JoinHorizontal(lipgloss.Left,
-		title("TIMEOUT"), dim(" "), timeoutView,
-	)
-	return m.paneStyle(focusTimeout, l.respInnerW, 1).Render(inner)
 }
 
 func (m Model) viewMain(l layout) string {
@@ -146,13 +156,10 @@ func (m Model) viewMain(l layout) string {
 
 func (m Model) viewBody(l layout) string {
 	request := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
-	responseColumn := lipgloss.JoinVertical(lipgloss.Left,
-		m.viewOptionsBar(l),
-		m.paneStyle(focusResponse, l.respInnerW, l.respInnerH).Render(m.viewResponseInner()),
-	)
+	response := m.paneStyle(focusResponse, l.respInnerW, l.respInnerH).Render(m.viewResponseInner())
 	gap := strings.Repeat(" ", l.gap)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, responseColumn)
+	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, response)
 }
 
 // viewResponseInner is the content placed inside the response pane: a status
@@ -169,9 +176,21 @@ func (m Model) viewResponseInner() string {
 	}
 }
 
-// respTabBar renders the Body / Headers selector for the response pane.
+// respTabBar renders the Body / Headers selector for the response pane. The
+// Body tab shows the active raw/pretty mode when the payload is JSON (i.e. when
+// the p toggle is meaningful).
 func (m Model) respTabBar() string {
-	names := []string{"Body", "Headers"}
+	bodyName := "Body"
+	if m.hasResp && m.respTab == 0 {
+		if _, ok := prettyJSON(m.resp.Body); ok {
+			if m.rawBody {
+				bodyName = "Body · raw"
+			} else {
+				bodyName = "Body · pretty"
+			}
+		}
+	}
+	names := []string{bodyName, "Headers"}
 	cells := make([]string, len(names))
 	for i, n := range names {
 		st := lipgloss.NewStyle().Padding(0, 1)
@@ -214,8 +233,6 @@ func (m Model) viewStatusBar() string {
 		hints = " i edit URL · t timeout · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusMethod:
 		hints = " j/k or ↑/↓ change method · ⏎ send · tab / ^w move panes · ? help"
-	case m.focus == focusTimeout:
-		hints = " i edit timeout · tab / ^w move panes · ? help"
 	case m.focus == focusCollection:
 		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
@@ -223,20 +240,37 @@ func (m Model) viewStatusBar() string {
 	case m.focus == focusRequest:
 		hints = " [/] tab · j/k row · h/l cell · i edit · o add · dd del · ^w/tab panes · ? help"
 	case m.focus == focusResponse:
-		hints = " [/] body·headers · j/k scroll · / search · y yank · ^w/tab panes · ? help"
+		hints = " [/] body·headers · p raw/pretty · j/k scroll · / search · y yank · ^w panes · ?"
 	}
+
+	nameSeg := m.docNameSeg()
 
 	hintStyle := lipgloss.NewStyle().Foreground(colDim)
 	if m.statusMsg != "" {
 		hintStyle = hintStyle.Foreground(colOK)
 	}
-	hintW := m.width - lipgloss.Width(modeTag)
+	hintW := m.width - lipgloss.Width(modeTag) - lipgloss.Width(nameSeg)
 	if hintW < 0 {
 		hintW = 0
 	}
 	hint := hintStyle.Width(hintW).Render(hints)
 
-	return lipgloss.JoinHorizontal(lipgloss.Left, modeTag, hint)
+	return lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, hint)
+}
+
+// docNameSeg renders the vim-style document label for the status bar: the saved
+// request name (or [No Name]) plus a [+] marker when there are unsaved edits.
+func (m Model) docNameSeg() string {
+	name := m.currentName
+	nameStyle := lipgloss.NewStyle().Foreground(colFg)
+	if name == "" {
+		name, nameStyle = "[No Name]", lipgloss.NewStyle().Foreground(colDim)
+	}
+	seg := nameStyle.Render(" " + name)
+	if m.dirty() {
+		seg += lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(" [+]")
+	}
+	return seg + "  "
 }
 
 func title(s string) string {

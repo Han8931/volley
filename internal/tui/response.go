@@ -50,16 +50,18 @@ func renderStatusLine(resp model.Response) string {
 	return status + meta
 }
 
-// renderResponseBody returns the scrollable body content, pretty-printing
-// JSON when the payload looks like JSON.
-func renderResponseBody(resp model.Response, width int) string {
+// renderResponseBody returns the scrollable body content. Unless raw is set, a
+// JSON-looking payload is pretty-printed.
+func renderResponseBody(resp model.Response, width int, raw bool) string {
 	if resp.Err != nil {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).
 			Render("Request failed:\n\n" + resp.Err.Error())
 	}
 	body := resp.Body
-	if pretty, ok := prettyJSON(body); ok {
-		body = pretty
+	if !raw {
+		if pretty, ok := prettyJSON(body); ok {
+			body = pretty
+		}
 	}
 	out := string(body)
 	if out == "" {

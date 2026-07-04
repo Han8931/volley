@@ -92,13 +92,13 @@ func TestFocusNavigation(t *testing.T) {
 	if got := step(base, keyDown).focus; got != focusURL {
 		t.Errorf("down arrow from URL should not change focus, got %v", got)
 	}
-	// Tab follows reading order: Collections, Method, URL, Request, Timeout,
-	// Response. From URL, tab advances to Request; shift+tab steps back to Method.
+	// Tab follows reading order: Collections, Method, URL, Request, Response.
+	// From URL, tab advances to Request; shift+tab steps back to Method.
 	if got := step(base, keyTab).focus; got != focusRequest {
 		t.Errorf("tab from URL: focus = %v, want Request", got)
 	}
-	if got := step(step(base, keyTab), keyTab).focus; got != focusTimeout {
-		t.Errorf("tab tab from URL: focus = %v, want Timeout", got)
+	if got := step(step(base, keyTab), keyTab).focus; got != focusResponse {
+		t.Errorf("tab tab from URL: focus = %v, want Response", got)
 	}
 	if got := step(base, keyShiftTab).focus; got != focusMethod {
 		t.Errorf("shift+tab from URL: focus = %v, want Method", got)
@@ -114,7 +114,7 @@ func TestArrowsNeverChangeFocus(t *testing.T) {
 
 	// From every pane, a bare arrow key does in-pane motion only — focus stays put.
 	for _, f := range []focus{
-		focusURL, focusMethod, focusTimeout, focusCollection, focusRequest, focusResponse,
+		focusURL, focusMethod, focusCollection, focusRequest, focusResponse,
 	} {
 		m := base.setFocus(f)
 		for _, k := range []tea.KeyMsg{keyUp, keyDown, keyLeft, keyRight} {
@@ -128,8 +128,8 @@ func TestArrowsNeverChangeFocus(t *testing.T) {
 	if got := step(step(base, keyCtrlW), keyDown).focus; got != focusCollection {
 		t.Errorf("ctrl+w ↓ from URL: focus = %v, want Collections", got)
 	}
-	if got := step(step(base.setFocus(focusResponse), keyCtrlW), keyUp).focus; got != focusTimeout {
-		t.Errorf("ctrl+w ↑ from Response: focus = %v, want Timeout", got)
+	if got := step(step(base.setFocus(focusResponse), keyCtrlW), keyUp).focus; got != focusURL {
+		t.Errorf("ctrl+w ↑ from Response: focus = %v, want URL (top row)", got)
 	}
 }
 
@@ -166,35 +166,107 @@ func TestURLBarTypesDirectly(t *testing.T) {
 	}
 }
 
-func TestTimeoutFieldReachableAndEditable(t *testing.T) {
+func TestTimeoutEditableInline(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 
-	// The Timeout/options bar sits directly above the Response pane, so the
-	// ctrl+w k window motion from Response lands on it.
-	m := step(step(base.setFocus(focusResponse), keyCtrlW), runes("k"))
-	if m.focus != focusTimeout {
-		t.Fatalf("ctrl+w k from Response: focus = %v, want Timeout", m.focus)
+	// Timeout is no longer a pane/tab stop: the 't' shortcut from the URL NORMAL
+	// sub-mode jumps straight to editing the inline field, without moving focus
+	// off the URL bar.
+	m := step(urlNormal(base), runes("t"))
+	if !m.timeoutInput.Focused() || !m.editing() {
+		t.Fatalf("t from URL normal should begin editing the timeout, focused=%v editing=%v",
+			m.timeoutInput.Focused(), m.editing())
+	}
+	if m.focus != focusURL {
+		t.Errorf("editing timeout should keep focus on the URL bar, got %v", m.focus)
 	}
 
-	// i begins editing; typing a duration and committing sets the timeout.
-	m = step(m, runes("i"))
-	if !m.editing() || !m.timeoutInput.Focused() {
-		t.Fatal("i on the timeout field should begin editing it")
-	}
+	// Typing a duration and committing sets the timeout and ends editing.
 	m = step(m, runes("2s"))
 	m = step(m, keyEnter)
 	if m.timeout != 2*time.Second {
 		t.Errorf("timeout = %v, want 2s", m.timeout)
 	}
-	// After committing, focus remains on the timeout field in normal mode.
-	if m.focus != focusTimeout || m.editing() {
-		t.Errorf("after commit: focus = %v editing = %v, want Timeout/normal", m.focus, m.editing())
+	if m.timeoutInput.Focused() || m.editing() {
+		t.Errorf("commit should end timeout editing, focused=%v editing=%v",
+			m.timeoutInput.Focused(), m.editing())
 	}
 
-	// The 't' shortcut from the URL NORMAL sub-mode jumps straight to editing.
-	m = step(urlNormal(base), runes("t"))
-	if m.focus != focusTimeout || !m.timeoutInput.Focused() {
-		t.Errorf("t from URL normal: focus = %v timeoutFocused = %v, want editing timeout", m.focus, m.timeoutInput.Focused())
+	// :timeout also sets it without any focus change.
+	m2, _ := base.executeCommand("timeout 5s")
+	if got := m2.(Model).timeout; got != 5*time.Second {
+		t.Errorf(":timeout 5s = %v, want 5s", got)
+	}
+}
+
+func TestRawPrettyToggle(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetValue("https://x.test")
+	m = step(m, keyEnter)
+	m = step(m, responseMsg{seq: m.sendSeq, resp: model.Response{
+		Status: "200 OK", StatusCode: 200, Body: []byte(`{"a":1,"b":2}`),
+	}})
+
+	// Default view pretty-prints JSON (indented across multiple lines).
+	if !strings.Contains(m.respText, "\n") {
+		t.Fatalf("default body should be pretty-printed, got %q", m.respText)
+	}
+
+	// p on the response pane switches to the verbatim bytes.
+	m = m.setFocus(focusResponse)
+	m = step(m, runes("p"))
+	if !m.rawBody || m.respText != `{"a":1,"b":2}` {
+		t.Errorf("after p: rawBody=%v body=%q, want raw verbatim body", m.rawBody, m.respText)
+	}
+	if !strings.Contains(m.View(), "raw") {
+		t.Error("tab bar should indicate the raw mode")
+	}
+
+	// p again restores pretty.
+	m = step(m, runes("p"))
+	if m.rawBody || !strings.Contains(m.respText, "\n") {
+		t.Errorf("second p should restore pretty: rawBody=%v body=%q", m.rawBody, m.respText)
+	}
+}
+
+func TestDocNameAndDirtyIndicator(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// A fresh, unedited buffer shows [No Name] and no dirty marker.
+	if v := base.View(); !strings.Contains(v, "[No Name]") || strings.Contains(v, "[+]") {
+		t.Errorf("blank buffer should read [No Name] with no [+]")
+	}
+
+	// Editing the URL marks the buffer dirty.
+	m := step(base, runes("https://x.test"))
+	if !strings.Contains(m.View(), "[+]") {
+		t.Errorf("an edited buffer should show the [+] dirty marker")
+	}
+
+	// A named, clean request shows its name and drops the marker.
+	named := base
+	named.currentName = "auth/login"
+	named.baseline = named.rawRequest()
+	v := named.View()
+	if !strings.Contains(v, "auth/login") {
+		t.Errorf("status bar should show the current request name")
+	}
+	if strings.Contains(v, "[+]") {
+		t.Errorf("a clean named request should not show [+]")
+	}
+}
+
+func TestTimeoutReadoutInTopBar(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// The readout lives inline in the top bar (no separate options pane).
+	if v := base.View(); !strings.Contains(v, "timeout") {
+		t.Fatal("top bar should carry an inline timeout readout")
+	}
+	// After setting a value it shows through in the rendered top bar.
+	m, _ := base.executeCommand("timeout 7s")
+	if v := m.(Model).View(); !strings.Contains(v, "7s") {
+		t.Errorf("top bar should show the current timeout value 7s")
 	}
 }
 
