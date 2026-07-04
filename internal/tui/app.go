@@ -53,6 +53,7 @@ const (
 	pendingNewBlank
 	pendingNewNamed
 	pendingQuit
+	pendingImportCurl
 )
 
 // Model is the root Bubble Tea model. It owns pane focus and the in-progress
@@ -71,7 +72,8 @@ type Model struct {
 
 	collectionStore collections.Store
 	collectionPane  collectionPane
-	collectionShown bool
+	collectionShown bool // effective tree visibility: the preference, gated by width
+	collectionPref  bool // user's show/hide preference, restored when the window is wide enough
 	currentName     string
 
 	vars    vars.Store
@@ -88,7 +90,7 @@ type Model struct {
 	respTab     int    // 0 = body, 1 = headers
 	respText    string // rendered body, kept for search
 	respHeaders string // rendered headers
-	rawBody     bool   // show the body verbatim instead of pretty-printing JSON
+	rawBody     bool   // sticky view preference: show the body verbatim instead of pretty-printing JSON (mode is shown in respTabBar)
 	pendingG    bool   // for the "gg" motion in the response viewport
 
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
@@ -143,8 +145,10 @@ func New() Model {
 	timeoutInput := textinput.New()
 	timeoutInput.Placeholder = httpx.DefaultTimeout.String()
 	timeoutInput.Prompt = ""
-	timeoutInput.CharLimit = 12
-	timeoutInput.Width = 7 // bounds the inline editor in the top bar
+	// Kept in sync with timeoutValueW / timeoutReserve so the inline editor and
+	// readout fit the URL bar's reserved budget.
+	timeoutInput.CharLimit = timeoutValueW
+	timeoutInput.Width = timeoutValueW
 
 	cmd := textinput.New()
 	cmd.Prompt = ""
@@ -164,6 +168,7 @@ func New() Model {
 		collectionStore: store,
 		collectionPane:  newCollectionPane(items, homeShorten(store.Root)),
 		collectionShown: true,
+		collectionPref:  true,
 		vars:            vars.New(),
 	}
 	if listErr != nil {
@@ -210,6 +215,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m = m.applyCollectionVisibility()
 		l := m.computeLayout()
 		m.vp.Width = l.respInnerW
 		m.vp.Height = l.respViewportH
@@ -523,14 +529,27 @@ func (m *Model) deleteGroup(name string) {
 }
 
 func (m Model) toggleCollectionPane() Model {
-	m.collectionShown = !m.collectionShown
+	m.collectionPref = !m.collectionPref
+	m = m.applyCollectionVisibility() // also moves focus off the tree if it hides
+	switch {
+	case m.collectionShown:
+		m.statusMsg = "tree shown"
+	case m.collectionPref:
+		m.statusMsg = "tree hidden (terminal too narrow)"
+	default:
+		m.statusMsg = "tree hidden"
+	}
+	return m
+}
+
+// applyCollectionVisibility recomputes the effective tree visibility from the
+// user's preference and the current width, auto-hiding the tree on terminals
+// too narrow to show it beside the request/response panes. Focus is pulled off
+// the tree when it hides so navigation can't strand on an invisible pane.
+func (m Model) applyCollectionVisibility() Model {
+	m.collectionShown = m.collectionPref && m.width >= collectionsMinWidth
 	if !m.collectionShown && m.focus == focusCollection {
 		m = m.setFocus(focusRequest)
-	}
-	if m.collectionShown {
-		m.statusMsg = "tree shown"
-	} else {
-		m.statusMsg = "tree hidden"
 	}
 	return m
 }
@@ -597,10 +616,13 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	if m.collectionShown {
 		paneX = l.collectionInnerW + borderOverhead + l.gap
 	}
+	// The URL pane sits after the fixed-width method selector on the top row,
+	// so the SEND button (right-aligned inside the URL pane) is offset by it.
+	urlPaneX := paneX + l.methodInnerW + borderOverhead + l.gap
 	buttonW := lipgloss.Width(m.sendButtonView())
 	buttonY := 1 // URL pane content row, below the top border.
-	buttonStartX := paneX + l.urlInnerW - buttonW
-	buttonEndX := paneX + l.urlInnerW - 1
+	buttonStartX := urlPaneX + l.urlInnerW - buttonW
+	buttonEndX := urlPaneX + l.urlInnerW - 1
 	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
 }
 
@@ -796,6 +818,7 @@ func (m Model) rawRequest() model.Request {
 	req.Headers = m.reqPane.headersOut()
 	req.Query = m.reqPane.queryOut()
 	req.Body = m.reqPane.bodyOut()
+	req.Auth = m.reqPane.authOut()
 	req.Timeout = m.timeout
 	return req
 }
@@ -804,6 +827,7 @@ func (m Model) rawRequest() model.Request {
 // expands {{variables}} and folds query params into the URL.
 func (m Model) buildRequest() model.Request {
 	req := m.vars.Apply(m.rawRequest())
+	req = req.ApplyAuth() // turn the auth helper into a header/query param
 	req.URL = appendQuery(req.URL, req.Query)
 	return req
 }
@@ -818,6 +842,9 @@ func (m Model) dirty() bool {
 // are treated as equal so a freshly-loaded request never reads as dirty.
 func requestsEqual(a, b model.Request) bool {
 	if a.Method != b.Method || a.URL != b.URL || a.Body != b.Body || a.Timeout != b.Timeout {
+		return false
+	}
+	if a.Auth != b.Auth {
 		return false
 	}
 	if len(a.Headers) != len(b.Headers) || len(a.Query) != len(b.Query) {
@@ -877,6 +904,8 @@ func (m Model) armSavePrompt(action pendingKind, arg string) Model {
 		verb = "opening another request"
 	case pendingNewBlank, pendingNewNamed:
 		verb = "starting a new request"
+	case pendingImportCurl:
+		verb = "importing a curl command"
 	case pendingQuit:
 		verb = "quitting"
 	}
@@ -930,6 +959,8 @@ func (m Model) performPending() (tea.Model, tea.Cmd) {
 		return m.newBlankRequest(), nil
 	case pendingNewNamed:
 		return m.newSavedRequest(arg), nil
+	case pendingImportCurl:
+		return m.applyCurlImport(arg), nil
 	case pendingQuit:
 		return m, tea.Quit
 	}
@@ -940,7 +971,11 @@ func (m Model) performPending() (tea.Model, tea.Cmd) {
 // request runs under a cancellable context whose cancel func is stashed on the
 // model so esc can abort it mid-flight.
 func (m Model) send() (tea.Model, tea.Cmd) {
-	if m.sending || m.url.Value() == "" {
+	if m.sending {
+		return m, nil
+	}
+	if strings.TrimSpace(m.url.Value()) == "" {
+		m.statusMsg = "cannot send: URL is empty"
 		return m, nil
 	}
 	built := m.buildRequest()

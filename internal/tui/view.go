@@ -80,19 +80,28 @@ func (m Model) viewURLBar(l layout) string {
 		urlView = truncateRunes(urlView, urlW)
 	}
 
-	button := m.sendButtonView()
-	timeoutSeg := m.timeoutSegView()
-	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(timeoutSeg) - lipgloss.Width(button) - 1
+	// The right edge holds the SEND button, preceded by the inline timeout
+	// readout when the bar has room (or is actively being edited).
+	right := m.sendButtonView()
+	if l.showTimeout || m.timeoutInput.Focused() {
+		right = m.timeoutSegView() + " " + right
+	}
+	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(right)
 	if space < 1 {
 		space = 1
 	}
-	inner := lipgloss.JoinHorizontal(lipgloss.Left, urlView, strings.Repeat(" ", space), timeoutSeg, " ", button)
+	inner := lipgloss.JoinHorizontal(lipgloss.Left, urlView, strings.Repeat(" ", space), right)
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
 }
 
-// timeoutReserve is the horizontal budget the URL bar sets aside on its right
-// edge for the inline timeout readout/editor ("timeout " + a short value).
-const timeoutReserve = 16
+const (
+	// timeoutValueW bounds the rendered width of the timeout value (both the
+	// readout and the inline editor); timeoutReserve is the URL bar's budget for
+	// the whole "timeout <value>" segment. Kept in sync with the timeout input's
+	// CharLimit/Width in New().
+	timeoutValueW  = 7
+	timeoutReserve = len("timeout ") + timeoutValueW + 1 // label + value + margin
+)
 
 // timeoutSegView renders the inline timeout readout carried on the right of the
 // URL bar. When the field is being edited (via t or :timeout) it shows the live
@@ -106,7 +115,7 @@ func (m Model) timeoutSegView() string {
 	if m.timeout <= 0 {
 		val = m.timeoutInput.Placeholder // engine default
 	}
-	return label + lipgloss.NewStyle().Foreground(colMethod).Render(val)
+	return label + lipgloss.NewStyle().Foreground(colMethod).Render(truncateRunes(val, timeoutValueW))
 }
 
 func urlContentWidth(l layout) int {
@@ -118,9 +127,12 @@ func urlContentWidth(l layout) int {
 }
 
 func urlInputWidth(l layout) int {
-	// The URL bar holds the input, the inline timeout readout, and the SEND
-	// button, with a one-cell gap before each of the trailing two.
-	w := urlContentWidth(l) - 1 - timeoutReserve - 1 - len(sendButtonText)
+	// The URL bar holds the input and the SEND button, plus the inline timeout
+	// readout when there's room — each trailing item has a one-cell gap.
+	w := urlContentWidth(l) - 1 - len(sendButtonText)
+	if l.showTimeout {
+		w -= 1 + timeoutReserve
+	}
 	if w < 1 {
 		return 1
 	}
@@ -255,22 +267,45 @@ func (m Model) viewStatusBar() string {
 	}
 	hint := hintStyle.Width(hintW).Render(hints)
 
-	return lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, hint)
+	bar := lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, hint)
+	// Clamp so a long name on a very narrow terminal can't overflow the row.
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(bar)
 }
 
 // docNameSeg renders the vim-style document label for the status bar: the saved
 // request name (or [No Name]) plus a [+] marker when there are unsaved edits.
+// docNameMaxW caps the request name shown in the status bar so a long path
+// can't crowd out the keybinding hints.
+const docNameMaxW = 28
+
 func (m Model) docNameSeg() string {
 	name := m.currentName
 	nameStyle := lipgloss.NewStyle().Foreground(colFg)
 	if name == "" {
 		name, nameStyle = "[No Name]", lipgloss.NewStyle().Foreground(colDim)
 	}
-	seg := nameStyle.Render(" " + name)
+	seg := nameStyle.Render(" " + truncateMiddle(name, docNameMaxW))
 	if m.dirty() {
 		seg += lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(" [+]")
 	}
 	return seg + "  "
+}
+
+// truncateMiddle shortens s to at most max runes, keeping the head and tail
+// around a central ellipsis so both the leading group and the leaf name stay
+// legible (e.g. "auth/very/long/…/login").
+func truncateMiddle(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 1 {
+		return string(r[:max])
+	}
+	keep := max - 1 // room for the ellipsis
+	head := keep / 2
+	tail := keep - head
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
 }
 
 func title(s string) string {

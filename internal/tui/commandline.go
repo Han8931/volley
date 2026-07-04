@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tabularasa/volley/internal/curl"
 	"github.com/tabularasa/volley/internal/model"
 )
 
@@ -139,9 +140,20 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			m.statusMsg = "renamed " + fields[1] + " → " + fields[2]
 			m.refreshCollections()
 		}
+	case "import":
+		rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), fields[0]))
+		parts := strings.Fields(rest)
+		if len(parts) == 0 || parts[0] != "curl" {
+			m.statusMsg = "usage: :import curl <command>"
+			return m, nil
+		}
+		return m.guardedImportCurl(rest)
 	case "copy", "cp":
+		if len(fields) == 2 && fields[1] == "curl" {
+			return m.copyAsCurl()
+		}
 		if len(fields) < 3 {
-			m.statusMsg = "usage: :copy old new"
+			m.statusMsg = "usage: :copy old new  (or :copy curl to copy the request as curl)"
 			return m, nil
 		}
 		if err := m.collectionStore.Copy(fields[1], fields[2]); err != nil {
@@ -160,7 +172,8 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "created group " + fields[1]
 			m.refreshCollections()
-			m.collectionShown = true
+			m.collectionPref = true
+			m = m.applyCollectionVisibility()
 			m = m.setFocus(focusCollection)
 		}
 	case "rmgroup", "rmg":
@@ -182,7 +195,8 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		}
 	case "ls", "list":
 		m.refreshCollections()
-		m.collectionShown = true // ensure the tree is visible before focusing it
+		m.collectionPref = true // ensure the tree is visible (width permitting) before focusing it
+		m = m.applyCollectionVisibility()
 		m = m.setFocus(focusCollection)
 	case "method", "m":
 		if len(fields) > 1 {
@@ -224,12 +238,13 @@ func (m Model) newBlankRequest() Model {
 }
 
 func (m Model) newSavedRequest(name string) Model {
-	m = m.applyRequest(model.NewRequest())
-	if err := m.collectionStore.Save(name, m.req); err != nil {
-		// Don't claim the name — no file was written.
+	req := model.NewRequest()
+	if err := m.collectionStore.Save(name, req); err != nil {
+		// Don't alter the current editor or claim the name — no file was written.
 		m.statusMsg = "create request failed: " + err.Error()
 		return m
 	}
+	m = m.applyRequest(req)
 	m.currentName = name
 	m.statusMsg = "created " + name + " — edit URL, then :save"
 	m.refreshCollections()
@@ -257,6 +272,51 @@ func (m Model) saveCurrentRequest(name string) (Model, bool) {
 	m.statusMsg = "saved " + name
 	m.refreshCollections()
 	return m, true
+}
+
+// guardedImportCurl parses cmd and loads it into the editor, first validating
+// so parse errors surface immediately, and popping the unsaved-changes prompt
+// when the current buffer has edits (import replaces it).
+func (m Model) guardedImportCurl(cmd string) (tea.Model, tea.Cmd) {
+	if _, _, err := curl.Parse(cmd); err != nil {
+		m.statusMsg = "import failed: " + err.Error()
+		return m, nil
+	}
+	if m.dirty() {
+		return m.armSavePrompt(pendingImportCurl, cmd), nil
+	}
+	return m.applyCurlImport(cmd), nil
+}
+
+// applyCurlImport loads a parsed curl command into a fresh, unnamed buffer.
+func (m Model) applyCurlImport(cmd string) Model {
+	req, warns, err := curl.Parse(cmd)
+	if err != nil {
+		m.statusMsg = "import failed: " + err.Error()
+		return m
+	}
+	m = m.applyRequest(req)
+	m.currentName = "" // the imported request isn't tied to a saved file yet
+	// An imported, unnamed request contains user data that is not on disk. Keep it
+	// dirty so quit/open/new prompts protect it until the user saves or discards.
+	m.baseline = model.NewRequest()
+	msg := "imported curl request"
+	if len(warns) > 0 {
+		msg += " — " + strings.Join(warns, "; ")
+	}
+	m.statusMsg = msg
+	return m
+}
+
+// copyAsCurl copies the current request (variables expanded, query folded into
+// the URL) to the system clipboard as a runnable curl command.
+func (m Model) copyAsCurl() (tea.Model, tea.Cmd) {
+	if err := clipboard.WriteAll(curl.Format(m.buildRequest())); err != nil {
+		m.statusMsg = "clipboard unavailable"
+	} else {
+		m.statusMsg = "copied request as curl to clipboard"
+	}
+	return m, nil
 }
 
 // applyRequest loads a Request into the editor panes (URL, method, tabs).

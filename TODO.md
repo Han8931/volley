@@ -1,6 +1,6 @@
 # Volley — Roadmap & UX Ideas
 
-_Last updated: 2026-07-02_
+_Last updated: 2026-07-05_
 
 Ideas to grow Volley from a functional MVP into a tool that a Postman/Bruno user
 would happily switch to **in the terminal**. Each item notes **why** it matters
@@ -38,11 +38,16 @@ keyboard-speed workflows and load testing.
 
 These are the things whose absence makes a Postman user bounce.
 
-- [ ] **Auth helpers** — a request-level auth type applied at send time (injects
-      the right header) instead of hand-writing `Authorization`. Start with
-      Bearer token, Basic (user/pass), and API-key (header or query). **Why:**
-      table-stakes in both Postman & Bruno. **Effort: M.**
-      _Touchpoints: `model.Request` (add `Auth`), `httpx.Do`, a request pane tab._
+- [x] **Auth helpers** — done: a request-level `model.Auth` (Bearer / Basic /
+      API-key) materialized at send time by `Request.ApplyAuth` into the right
+      header (or query param for API-key). Edited in a new **Auth** tab in the
+      request pane (`components.AuthEditor`: type selector + type-specific
+      fields, password masked). `{{vars}}` in auth fields are expanded by
+      `vars.Apply` and flagged by `vars.Unresolved`; auth persists via the
+      versioned storage DTO (legacy files without it still load) and counts
+      toward unsaved-changes detection. Injected header is appended last so it
+      overrides a hand-written one. Tested at the model, vars, storage, and
+      component levels. _Follow-up: OAuth2 flows are out of scope for now._
 - [ ] **Environments** — multiple named variable sets (dev/staging/prod) that
       switch instantly (`:env prod`), persisted as files under
       `~/.config/volley/environments/*.json`. Show the active env in the status
@@ -60,10 +65,12 @@ These are the things whose absence makes a Postman user bounce.
       GraphQL (query + variables). Auto-set `Content-Type` unless overridden.
       **Why:** raw-only blocks form posts & uploads that both rivals support.
       **Effort: L.** _Touchpoints: request Body tab, `model.Request`, `httpx`._
-- [ ] **curl import & export** — `:import curl` (paste a `curl …` → fills the
-      request) and `yc` / `:copy curl` (copy the current request as a curl
-      command). **Why:** devs paste curl constantly; highest QoL-per-effort win.
-      **Effort: S–M.**
+- [x] **curl import & export** — done: `internal/curl` (Parse + Format, fully
+      tested incl. browser "Copy as cURL" format and round-trip). `:import curl …`
+      fills the request (method, headers, data, basic auth, --max-time; unknown
+      flags warned, not fatal) and guards unsaved edits; `:copy curl` copies the
+      current request (vars expanded, query folded) to the clipboard. Follow-ups:
+      `yc` keybind, and splitting an imported query string into the Params table.
 - [ ] **Value extraction / request chaining** — after a response,
       `:extract token = json .data.token` (JSONPath/GJSON) saves into the active
       environment so `{{token}}` works in the next request. **Why:** auth-then-call
@@ -81,24 +88,48 @@ Where a Vim TUI can feel *faster* than the GUIs.
   - [ ] Run config: concurrency, duration **or** N requests, target RPS. **M.**
   - [ ] Live TUI dashboard: RPS, in-flight, latency p50/p90/p99, status
         histogram, error rate, sparkline. **L.**
-  - [ ] Summary report + export (JSON/CSV). **S.**
+  - [ ] Summary report + export (JSON/CSV, plus an HTML CI artifact). **S.**
+  - [ ] **Generate load test from the current request** — capstone: take the
+        open/saved `model.Request` and hand it to `loadx` (`:load` /
+        `:loadtest`). Turns the API client and the load tester into one
+        workflow instead of two features. **S** (once the MVP exists).
+  - [ ] **Load-test comparison mode** — diff two runs (latency p50/p90/p99, RPS,
+        error-rate deltas) to answer "did my change regress p99?". **M.**
   - **Why:** neither Postman nor Bruno does this; k6/vegeta aren't interactive.
-        This is Volley's signature feature.
-- [ ] **Fuzzy quick-open (`ctrl+p`)** — Telescope-style incremental finder over
-      all saved requests (and commands). **Why:** big trees are slow to `j/k`
-      through; fuzzy jump is the Vim-user expectation. **Effort: M.**
+        This is Volley's signature feature — and generate-from-request +
+        comparison are what make it a *workflow*, not just a dashboard.
+- [ ] **Fuzzy quick-open / command palette (`ctrl+p`)** — Telescope-style
+      incremental finder over saved requests, and extend the same picker to
+      commands, environments, and variables. **Why:** big trees are slow to
+      `j/k` through; fuzzy jump is the Vim-user expectation. **Effort: M.**
 - [ ] **Request history** — ring of recent sends (method, URL, status, time),
       re-run or promote to a saved request. Persisted. **Why:** Postman history
       panel; great for exploratory work. **Effort: M.**
 - [ ] **Richer response views** — _Done: **Raw ↔ Pretty** toggle (`p`) on the
-      response Body tab, mode shown in `respTabBar`._ Still to do: extend
-      `respTabBar` with a **Cookies** tab (parsed `Set-Cookie`), and
-      a **Timing** view (DNS / connect / TLS / TTFB via `httptrace`). Add
-      syntax highlighting to the response body (reuse the JSON highlighter; add
-      XML/HTML). **Why:** Postman's response inspector. **Effort: M.**
+      response Body tab, mode shown in `respTabBar`._ Still to do, as one
+      "response inspector" push:
+  - a **Cookies** tab (parsed `Set-Cookie`).
+  - a **Timing** waterfall (DNS / connect / TLS / TTFB / download via
+        `httptrace`), with **latency-budget warnings** — highlight hops/totals
+        over a configured threshold.
+  - a **TLS/certificate inspector** (chain, issuer, expiry) — cheap once the
+        `httptrace` timing plumbing exists; bundle it here.
+  - a **redirect-chain** view (each hop: status, `Location`, timing) — see also
+        P2 Network options.
+  - a **rate-limit helper**: on `429`, surface reset time from
+        `Retry-After` / `X-RateLimit-*` headers.
+  - syntax highlighting for the response body (reuse the JSON highlighter; add
+        XML/HTML).
+  **Why:** Postman's response inspector, but terminal-native. **Effort: M.**
 - [ ] **Save response to file / yank path** — `:w response.json`, and
       `:extract`-style copy of a JSONPath value to the clipboard. Complements the
       10 MiB read cap (offer "save full body"). **Why:** large payloads. **S.**
+- [ ] **Response diff & snapshots** — save an expected response for a request
+      (a "snapshot" file next to the collection) and diff the current response
+      against it — or against the previous response — with a side-by-side/unified
+      view (`:diff`, `:snapshot`). Feeds golden-file regression checks in the
+      Tests + CLI runner. **Why:** git-friendly regression detection no GUI does
+      in-terminal; pairs with assertions. **Effort: M.**
 - [ ] **Assertions / tests (no JS)** — a terminal-friendly DSL per request:
       `status == 200`, `header Content-Type ~ json`, `json .ok == true`,
       `time < 500ms`. Show a **Tests** tab with pass/fail. **Why:** Postman/Bruno
@@ -107,6 +138,13 @@ Where a Vim TUI can feel *faster* than the GUIs.
       `volley run --dir APISet1`) executes saved requests + assertions, exits
       non-zero on failure, `--json` output. **Why:** `bru run` / Newman for CI;
       makes collections executable. **Effort: M.** _Reuses the engine + Tests._
+
+- [ ] **Quick wins (S each)** — small, high-satisfaction editor niceties:
+  - **Open in `$EDITOR`** — edit large bodies/headers in external Vim/Neovim.
+  - **Variable autocomplete** — complete `{{token}}`, `{{baseUrl}}`, … from the
+        active scopes while typing.
+  - **Inline variable preview** — show the fully-resolved URL / headers / body
+        before send (extends the already-done unresolved-`{{var}}` warning).
 
 ## P2 — Polish, interop & power features
 
@@ -151,6 +189,28 @@ Where a Vim TUI can feel *faster* than the GUIs.
       the status bar instead of being silently dropped.
 
 ---
+
+## Considered & deferred (2026-07-05 idea review)
+
+Batch of feature ideas reviewed against the wedge; decisions recorded so they
+aren't re-litigated:
+
+- **Flow runner / session recorder** — _not a separate feature._ "login →
+  extract token → call → assert" is already the composition of **value
+  extraction/chaining** + **assertions** + the **headless CLI runner**. Build
+  those primitives first; a "flow" becomes a saved sequence of them. Revisit a
+  dedicated flow UI only if the composed primitives prove awkward.
+- **Pre-request / post-response hooks** — powerful but a big surface; most use
+  cases are covered by extraction + assertions. Defer until those ship and a
+  real gap is visible.
+- **Macros (keystroke recording)** — declined. It's a Vim TUI; users already
+  have Vim macros. Poor ROI.
+- **Generate tests from response** — worth doing, but folds naturally into the
+  Assertions/tests item (offer "make assertions from this status/body shape").
+- **Collection README/docs pane** — markdown notes per collection/folder;
+  git-friendly, low urgency. Parking in P2 if it comes up again.
+- **Secret detection**, **OpenAPI endpoint browser** — already covered by P2
+  Secrets management and Import/export & code-gen respectively.
 
 ## Suggested near-term order
 

@@ -13,7 +13,17 @@ type layout struct {
 	bodyInnerH       int // inner height of the request pane / whole lower area
 	respInnerH       int // inner height of the response pane
 	respViewportH    int // scrollable body height inside the response pane
+	showTimeout      bool // whether the URL bar has room for the inline timeout readout
 }
+
+// minURLInputW is the URL input width below which the inline timeout readout is
+// dropped from the top bar (it stays editable via t / :timeout).
+const minURLInputW = 12
+
+// collectionsMinWidth is the terminal width below which the collections tree is
+// auto-hidden, handing its columns to the request/response panes. The user's
+// show/hide preference is remembered and restored when the window widens.
+const collectionsMinWidth = 60
 
 // borderOverhead is the rendered width/height added by a bordered pane.
 // Lip Gloss' Width/Height values include padding, but not borders.
@@ -64,6 +74,9 @@ func (m Model) computeLayout() layout {
 		urlTotalW = 8
 	}
 	urlW := urlTotalW - borderOverhead
+	// Show the inline timeout readout only when the URL bar can spare the room
+	// for it and the SEND button while keeping the input usably wide.
+	showTimeout := (urlW - 2 - 1 - len(sendButtonText)) - (1 + timeoutReserve) >= minURLInputW
 	bodyAvail := rightTotalW - gap - 2*borderOverhead
 	if bodyAvail < 2 {
 		bodyAvail = 2
@@ -103,5 +116,6 @@ func (m Model) computeLayout() layout {
 		bodyInnerH:       bodyH,
 		respInnerH:       respH,
 		respViewportH:    vpH,
+		showTimeout:      showTimeout,
 	}
 }

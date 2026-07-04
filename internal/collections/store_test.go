@@ -72,6 +72,7 @@ func TestStoreRoundTripAllFields(t *testing.T) {
 		Headers: []model.Header{{Name: "Authorization", Value: "Bearer x", Enabled: true}, {Name: "X-Off", Value: "no", Enabled: false}},
 		Query:   []model.KV{{Key: "q", Value: "1", Enabled: true}},
 		Body:    `{"k":"v"}`,
+		Auth:    model.Auth{Type: model.AuthAPIKey, Key: "X-Key", Value: "{{secret}}", InQuery: true},
 		Timeout: 12 * time.Second,
 	}
 	if err := s.Save("round/trip", req); err != nil {

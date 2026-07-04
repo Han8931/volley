@@ -79,3 +79,34 @@ func TestUnresolved(t *testing.T) {
 		t.Errorf("Unresolved = %v, want %v", got, want)
 	}
 }
+
+func TestApplyExpandsAuth(t *testing.T) {
+	s := Store{"tok": "secret", "u": "admin", "pw": "hunter2", "k": "keyval"}
+
+	bearer := s.Apply(model.Request{Auth: model.Auth{Type: model.AuthBearer, Token: "{{tok}}"}})
+	if bearer.Auth.Token != "secret" {
+		t.Errorf("bearer token = %q, want secret", bearer.Auth.Token)
+	}
+
+	basic := s.Apply(model.Request{Auth: model.Auth{Type: model.AuthBasic, Username: "{{u}}", Password: "{{pw}}"}})
+	if basic.Auth.Username != "admin" || basic.Auth.Password != "hunter2" {
+		t.Errorf("basic = %q/%q, want admin/hunter2", basic.Auth.Username, basic.Auth.Password)
+	}
+
+	apikey := s.Apply(model.Request{Auth: model.Auth{Type: model.AuthAPIKey, Key: "X-Key", Value: "{{k}}"}})
+	if apikey.Auth.Value != "keyval" {
+		t.Errorf("apikey value = %q, want keyval", apikey.Auth.Value)
+	}
+}
+
+func TestUnresolvedIncludesAuthByType(t *testing.T) {
+	// Only the active type's fields are inspected.
+	req := model.Request{Auth: model.Auth{
+		Type:     model.AuthBearer,
+		Token:    "{{tok}}",
+		Username: "{{unused}}", // belongs to Basic; must be ignored
+	}}
+	if got := Unresolved(req); !reflect.DeepEqual(got, []string{"tok"}) {
+		t.Errorf("Unresolved = %v, want [tok]", got)
+	}
+}

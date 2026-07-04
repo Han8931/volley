@@ -41,7 +41,7 @@ var helpSections = []struct {
 		{"m d  ·  dd", "delete request or group (with confirm)"},
 	}},
 	{"Request pane", [][2]string{
-		{"H / L  ·  [ / ]", "switch tab (Headers·Body·Query)"},
+		{"H / L  ·  [ / ]", "switch tab (Headers·Body·Params)"},
 		{"j / k  ·  gg / G", "move rows  ·  first / last row"},
 		{"h/l  0/$  b/w", "key / value cell"},
 		{"i/a/enter", "edit current cell"},
@@ -70,6 +70,8 @@ var helpSections = []struct {
 		{":delete users/list", "delete saved request"},
 		{":rename old new", "rename saved request"},
 		{":copy old new", "copy saved request"},
+		{":import curl …", "fill request from a pasted curl command"},
+		{":copy curl", "copy current request as a curl command"},
 		{":method POST", "set HTTP method"},
 		{":set tok=abc", "define a {{tok}} variable"},
 		{":timeout 10s", "set request timeout"},

@@ -65,6 +65,16 @@ func Unresolved(req model.Request) []string {
 			collect(q.Value)
 		}
 	}
+	switch req.Auth.Type {
+	case model.AuthBearer:
+		collect(req.Auth.Token)
+	case model.AuthBasic:
+		collect(req.Auth.Username)
+		collect(req.Auth.Password)
+	case model.AuthAPIKey:
+		collect(req.Auth.Key)
+		collect(req.Auth.Value)
+	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {
 		names = append(names, n)
@@ -97,5 +107,12 @@ func (s Store) Apply(req model.Request) model.Request {
 			Enabled: kv.Enabled,
 		}
 	}
+
+	out.Auth = req.Auth
+	out.Auth.Token = s.Expand(req.Auth.Token)
+	out.Auth.Username = s.Expand(req.Auth.Username)
+	out.Auth.Password = s.Expand(req.Auth.Password)
+	out.Auth.Key = s.Expand(req.Auth.Key)
+	out.Auth.Value = s.Expand(req.Auth.Value)
 	return out
 }

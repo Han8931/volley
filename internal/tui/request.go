@@ -16,9 +16,13 @@ const (
 	tabHeaders = iota
 	tabBody
 	tabQuery
+	tabAuth
 )
 
-var tabNames = []string{"Headers", "Body", "Query"}
+// tabNames are the display labels; "Params" is Postman/Bruno's term for the
+// query-string editor (the tabQuery const and model.Request.Query keep the
+// precise internal name).
+var tabNames = []string{"Headers", "Body", "Params", "Auth"}
 
 // bodyEntryKeys are the Vim keys that, from pane-normal on the Body tab,
 // activate the body editor (the engine then handles cursor placement/mode).
@@ -31,6 +35,7 @@ type requestPane struct {
 	tab     int
 	headers components.KVEditor
 	query   components.KVEditor
+	auth    components.AuthEditor
 
 	body       *vimtext.Buffer
 	bodyActive bool
@@ -51,6 +56,7 @@ func newRequestPane() requestPane {
 	return requestPane{
 		headers: components.NewKVEditor("headers"),
 		query:   components.NewKVEditor("query params"),
+		auth:    components.NewAuthEditor(),
 		body:    body,
 	}
 }
@@ -59,6 +65,7 @@ func (p *requestPane) setSize(w, h int) {
 	p.width, p.height = w, h
 	p.headers.SetWidth(w)
 	p.query.SetWidth(w)
+	p.auth.SetWidth(w)
 	p.bodyWidth = w
 	p.bodyHeight = h - 2 // tab bar + blank line
 	if p.bodyHeight < 1 {
@@ -70,6 +77,7 @@ func (p *requestPane) setFocused(f bool) {
 	p.focused = f
 	p.headers.SetFocused(f && p.tab == tabHeaders)
 	p.query.SetFocused(f && p.tab == tabQuery)
+	p.auth.SetFocused(f && p.tab == tabAuth)
 }
 
 // editing reports whether a child editor is actively capturing keys.
@@ -79,6 +87,8 @@ func (p requestPane) editing() bool {
 		return p.bodyActive
 	case tabQuery:
 		return p.query.Editing()
+	case tabAuth:
+		return p.auth.Editing()
 	default:
 		return p.headers.Editing()
 	}
@@ -92,6 +102,8 @@ func (p requestPane) inInsert() bool {
 		return p.bodyActive && p.body.Mode() == vimtext.Insert
 	case tabQuery:
 		return p.query.Editing()
+	case tabAuth:
+		return p.auth.Editing()
 	default:
 		return p.headers.Editing()
 	}
@@ -100,6 +112,7 @@ func (p requestPane) inInsert() bool {
 func (p requestPane) headersOut() []model.Header { return p.headers.Headers() }
 func (p requestPane) queryOut() []model.KV       { return p.query.Rows() }
 func (p requestPane) bodyOut() string            { return p.body.Text() }
+func (p requestPane) authOut() model.Auth        { return p.auth.Auth() }
 
 func (p *requestPane) setRequest(req model.Request) {
 	headerRows := make([]model.KV, 0, len(req.Headers))
@@ -108,6 +121,7 @@ func (p *requestPane) setRequest(req model.Request) {
 	}
 	p.headers.SetRows(headerRows)
 	p.query.SetRows(req.Query)
+	p.auth.SetAuth(req.Auth)
 	p.body = vimtext.New(req.Body, false)
 	p.body.SetMode(vimtext.Normal)
 	p.bodyActive = false
@@ -178,6 +192,8 @@ func (p *requestPane) updateNormal(msg tea.KeyMsg) tea.Cmd {
 		}
 	case tabQuery:
 		p.query.UpdateNormal(msg)
+	case tabAuth:
+		p.auth.UpdateNormal(msg)
 	default:
 		p.headers.UpdateNormal(msg)
 	}
@@ -195,6 +211,8 @@ func (p *requestPane) updateEditing(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case tabQuery:
 		return p.query.UpdateEditing(msg)
+	case tabAuth:
+		return p.auth.UpdateEditing(msg)
 	default:
 		return p.headers.UpdateEditing(msg)
 	}
@@ -263,6 +281,8 @@ func (p requestPane) tabContent() string {
 		return p.renderBody()
 	case tabQuery:
 		return p.query.View()
+	case tabAuth:
+		return p.auth.View()
 	default:
 		return p.headers.View()
 	}

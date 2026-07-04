@@ -24,6 +24,7 @@ type storedRequest struct {
 	Headers       []storedHeader `json:"headers,omitempty"`
 	Query         []storedKV     `json:"query,omitempty"`
 	Body          string         `json:"body,omitempty"`
+	Auth          *storedAuth    `json:"auth,omitempty"`
 	Timeout       duration       `json:"timeout,omitempty"`
 }
 
@@ -31,6 +32,18 @@ type storedHeader struct {
 	Name    string `json:"name"`
 	Value   string `json:"value"`
 	Enabled bool   `json:"enabled"`
+}
+
+// storedAuth is the on-disk form of model.Auth. It is a pointer on
+// storedRequest so requests with no auth helper emit no "auth" key at all.
+type storedAuth struct {
+	Type     string `json:"type,omitempty"`
+	Token    string `json:"token,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Key      string `json:"key,omitempty"`
+	Value    string `json:"value,omitempty"`
+	InQuery  bool   `json:"inQuery,omitempty"`
 }
 
 type storedKV struct {
@@ -94,6 +107,17 @@ func toStored(req model.Request) storedRequest {
 	for _, q := range req.Query {
 		sr.Query = append(sr.Query, storedKV{Key: q.Key, Value: q.Value, Enabled: q.Enabled})
 	}
+	if req.Auth.Type != model.AuthNone {
+		sr.Auth = &storedAuth{
+			Type:     req.Auth.Type,
+			Token:    req.Auth.Token,
+			Username: req.Auth.Username,
+			Password: req.Auth.Password,
+			Key:      req.Auth.Key,
+			Value:    req.Auth.Value,
+			InQuery:  req.Auth.InQuery,
+		}
+	}
 	return sr
 }
 
@@ -111,6 +135,17 @@ func (sr storedRequest) toModel() model.Request {
 	}
 	for _, q := range sr.Query {
 		req.Query = append(req.Query, model.KV{Key: q.Key, Value: q.Value, Enabled: q.Enabled})
+	}
+	if sr.Auth != nil {
+		req.Auth = model.Auth{
+			Type:     sr.Auth.Type,
+			Token:    sr.Auth.Token,
+			Username: sr.Auth.Username,
+			Password: sr.Auth.Password,
+			Key:      sr.Auth.Key,
+			Value:    sr.Auth.Value,
+			InQuery:  sr.Auth.InQuery,
+		}
 	}
 	if req.Method == "" {
 		req.Method = "GET"

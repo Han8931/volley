@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,176 @@ func TestTimeoutEditableInline(t *testing.T) {
 	}
 }
 
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+func clickAt(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
+}
+
+// TestSendButtonHitbox derives the SEND button's real on-screen position from
+// the rendered view and checks the mouse hit-test agrees — guarding the offset
+// for the method pane that precedes the URL bar.
+func TestSendButtonHitbox(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	var x, y = -1, -1
+	for i, ln := range strings.Split(m.View(), "\n") {
+		vis := stripANSI(ln)
+		if idx := strings.Index(vis, "SEND"); idx >= 0 {
+			x = lipgloss.Width(vis[:idx]) // display column, not byte offset
+			y = i
+			break
+		}
+	}
+	if x < 0 {
+		t.Fatal("SEND not found in rendered view")
+	}
+	if !m.sendButtonClicked(clickAt(x, y)) {
+		t.Errorf("click on SEND at (%d,%d) should hit the button", x, y)
+	}
+	if m.sendButtonClicked(clickAt(x-25, y)) {
+		t.Error("a click well left of the button (over the URL input) should miss")
+	}
+	if m.sendButtonClicked(clickAt(x, y+1)) {
+		t.Error("a click on the wrong row should miss")
+	}
+}
+
+func TestCollectionsAutoHideOnNarrow(t *testing.T) {
+	wide := step(New(), tea.WindowSizeMsg{Width: 120, Height: 24})
+	if !wide.collectionShown {
+		t.Fatal("tree should show on a wide terminal")
+	}
+	// Narrowing hides the tree but preserves the user's preference.
+	narrow := step(wide, tea.WindowSizeMsg{Width: 50, Height: 24})
+	if narrow.collectionShown {
+		t.Error("tree should auto-hide on a narrow terminal")
+	}
+	if !narrow.collectionPref {
+		t.Error("the show preference should be preserved while auto-hidden")
+	}
+	// Widening restores it.
+	if back := step(narrow, tea.WindowSizeMsg{Width: 120, Height: 24}); !back.collectionShown {
+		t.Error("tree should return when the terminal widens again")
+	}
+}
+
+func TestFocusLeavesTreeWhenAutoHidden(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 24}).setFocus(focusCollection)
+	m = step(m, tea.WindowSizeMsg{Width: 50, Height: 24})
+	if m.focus == focusCollection {
+		t.Error("focus must leave the tree when it auto-hides, not strand on an invisible pane")
+	}
+}
+
+func TestManualHideSurvivesResize(t *testing.T) {
+	// A user who hides the tree keeps it hidden even after widening.
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = m.toggleCollectionPane() // hide
+	if m.collectionShown || m.collectionPref {
+		t.Fatal("toggle should hide the tree and clear the preference")
+	}
+	if back := step(m, tea.WindowSizeMsg{Width: 130, Height: 24}); back.collectionShown {
+		t.Error("a manually hidden tree should stay hidden on resize")
+	}
+}
+
+func TestTimeoutReadoutHiddenWhenNarrow(t *testing.T) {
+	topBar := func(v string) string {
+		ls := strings.Split(v, "\n")
+		if len(ls) > 3 {
+			ls = ls[:3]
+		}
+		return stripANSI(strings.Join(ls, "\n"))
+	}
+	wide := step(New(), tea.WindowSizeMsg{Width: 120, Height: 24})
+	if !strings.Contains(topBar(wide.View()), "timeout") {
+		t.Error("wide terminal should show the inline timeout readout")
+	}
+	narrow := step(New(), tea.WindowSizeMsg{Width: 46, Height: 24})
+	if strings.Contains(topBar(narrow.View()), "timeout") {
+		t.Error("narrow terminal should drop the inline timeout readout to protect the URL input")
+	}
+}
+
+func TestTruncateMiddle(t *testing.T) {
+	if got := truncateMiddle("short", 28); got != "short" {
+		t.Errorf("short name should pass through, got %q", got)
+	}
+	got := truncateMiddle("auth/very/long/path/to/the/login", 20)
+	if n := len([]rune(got)); n != 20 || !strings.Contains(got, "…") {
+		t.Errorf("long name should be middle-truncated to 20 with an ellipsis, got %q (%d)", got, n)
+	}
+}
+
+func TestImportCurlCommand(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	tm, _ := m.executeCommand(`import curl -X POST https://api.test/login -H 'Accept: application/json' -d '{"u":1}'`)
+	m = tm.(Model)
+	if m.req.Method != "POST" || m.url.Value() != "https://api.test/login" {
+		t.Errorf("imported method/url = %q / %q", m.req.Method, m.url.Value())
+	}
+	built := m.buildRequest()
+	if built.Body != `{"u":1}` {
+		t.Errorf("imported body = %q", built.Body)
+	}
+	if hs := m.reqPane.headersOut(); len(hs) != 1 || hs[0].Name != "Accept" {
+		t.Errorf("imported headers = %+v", hs)
+	}
+	if !strings.Contains(m.statusMsg, "imported") {
+		t.Errorf("status = %q", m.statusMsg)
+	}
+	if !m.dirty() {
+		t.Error("an imported unnamed request should be dirty until saved")
+	}
+}
+
+func TestImportCurlGuardsUnsavedEdits(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = step(m, runes("https://existing.test")) // dirty the buffer
+
+	tm, _ := m.executeCommand("import curl https://new.test")
+	m = tm.(Model)
+	if m.pendingAction != pendingImportCurl {
+		t.Fatalf("a dirty import should arm the save prompt, got pendingAction=%v", m.pendingAction)
+	}
+	if m.url.Value() != "https://existing.test" {
+		t.Errorf("import must not apply before the prompt is resolved, url=%q", m.url.Value())
+	}
+	// 'n' discards the edits and performs the deferred import.
+	tm, _ = m.resolveSaveConfirm(runes("n"))
+	if got := tm.(Model).url.Value(); got != "https://new.test" {
+		t.Errorf("after discarding, the import should apply; url=%q", got)
+	}
+}
+
+func TestImportCurlBadInput(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	tm, _ := m.executeCommand("import curl -X POST -H 'a: b'") // no URL
+	m = tm.(Model)
+	if !strings.Contains(m.statusMsg, "failed") || m.pendingAction != pendingNone {
+		t.Errorf("a URL-less curl should fail cleanly without arming a prompt, status=%q pending=%v", m.statusMsg, m.pendingAction)
+	}
+
+	tm, _ = m.executeCommand("import curlfoo https://example.test")
+	m = tm.(Model)
+	if !strings.Contains(m.statusMsg, "usage") {
+		t.Errorf("import curlfoo should be rejected as usage error, status=%q", m.statusMsg)
+	}
+}
+
+func TestCopyCurlCommandRoutes(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetValue("https://api.test/x")
+	tm, _ := m.executeCommand("copy curl")
+	// Clipboard availability varies by environment; either way a status is set
+	// and the command must not fall through to the ":copy old new" usage error.
+	if s := tm.(Model).statusMsg; s == "" || strings.Contains(s, "usage") {
+		t.Errorf(":copy curl should route to the exporter, status=%q", s)
+	}
+}
+
 func TestRawPrettyToggle(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.url.SetValue("https://x.test")
@@ -358,8 +529,8 @@ func TestRequestTabsReachableFromURLFocus(t *testing.T) {
 
 	m = step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = step(urlNormal(m), runes("["))
-	if m.focus != focusRequest || m.reqPane.tab != tabQuery {
-		t.Fatalf("[ from URL normal focus = focus %v tab %d, want Request/Query", m.focus, m.reqPane.tab)
+	if m.focus != focusRequest || m.reqPane.tab != tabAuth {
+		t.Fatalf("[ from URL normal focus = focus %v tab %d, want Request/Auth (last tab)", m.focus, m.reqPane.tab)
 	}
 }
 
@@ -443,6 +614,18 @@ func TestEnterSendsAndGoesInFlight(t *testing.T) {
 	}
 }
 
+func TestSendWarnsOnEmptyURL(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetValue("   ") // whitespace-only counts as empty
+	m = step(m, keyEnter)
+	if m.sending {
+		t.Fatal("Enter with an empty URL must not start a request")
+	}
+	if !strings.Contains(m.statusMsg, "URL is empty") {
+		t.Errorf("statusMsg = %q, want it to say the URL is empty", m.statusMsg)
+	}
+}
+
 func TestSendWarnsOnUnresolvedVars(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.url.SetValue("https://{{host}}/ping")
@@ -517,9 +700,13 @@ func TestSavePromptKeepsWorkWhenSaveFails(t *testing.T) {
 func TestNewSavedRequestDoesNotClaimNameOnFailure(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.collectionStore = failingStore(t)
+	m.url.SetValue("https://keep.test")
 	m = m.newSavedRequest("api/new")
 	if m.currentName == "api/new" {
 		t.Error("currentName must not be set when the create/save failed")
+	}
+	if m.url.Value() != "https://keep.test" {
+		t.Errorf("failed create must not blank the editor, url=%q", m.url.Value())
 	}
 	if !strings.Contains(m.statusMsg, "failed") {
 		t.Errorf("statusMsg = %q, want a failure message", m.statusMsg)
