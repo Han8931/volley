@@ -88,12 +88,15 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	if len(fields) == 0 {
 		return m, nil
 	}
+	// Volley edits one request at a time, so the Vim "all" variants (:qa, :wqa,
+	// :xa) are accepted as aliases of their single-buffer forms — muscle memory
+	// shouldn't error out.
 	switch fields[0] {
-	case "q", "quit":
+	case "q", "quit", "qa", "qall", "quitall":
 		return m.guardedQuit()
-	case "q!", "quit!":
+	case "q!", "quit!", "qa!", "qall!", "quitall!":
 		return m, tea.Quit // force-quit, discarding unsaved edits
-	case "wq", "x":
+	case "wq", "x", "wqa", "wqall", "xa", "xall":
 		if m.currentName == "" {
 			m.statusMsg = "no name yet — use :w <name> first"
 			return m, nil
@@ -322,7 +325,7 @@ func (m Model) copyAsCurl() (tea.Model, tea.Cmd) {
 // applyRequest loads a Request into the editor panes (URL, method, tabs).
 func (m Model) applyRequest(req model.Request) Model {
 	m.req = req
-	m.url.SetValue(req.URL)
+	m.url.SetText(req.URL)
 	m.timeout = req.Timeout
 	m.timeoutInput.SetValue(formatTimeout(req.Timeout))
 	m.methodIdx = 0

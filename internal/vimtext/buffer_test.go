@@ -218,3 +218,98 @@ func TestSingleLineNoNewline(t *testing.T) {
 		t.Errorf("single-line enter should be inert, got %q", b.Text())
 	}
 }
+
+// singleLineNormal builds a single-line buffer in Normal mode at column col.
+func singleLineNormal(text string, col int) *Buffer {
+	b := New(text, true)
+	b.SetMode(Normal)
+	b.row, b.col = 0, col
+	return b
+}
+
+func TestSingleLineOpenLineStaysOneLine(t *testing.T) {
+	// 'o' must not add a row; it appends at the end and enters Insert.
+	b := singleLineNormal("abc", 0)
+	b.Feed("o")
+	b.Feed("X")
+	if got := b.Text(); got != "abcX" {
+		t.Errorf("o on single line = %q, want abcX", got)
+	}
+	if len(b.lines) != 1 {
+		t.Errorf("single-line buffer grew to %d rows", len(b.lines))
+	}
+
+	// 'O' inserts at the start.
+	b2 := singleLineNormal("abc", 2)
+	b2.Feed("O")
+	b2.Feed("Y")
+	if got := b2.Text(); got != "Yabc" {
+		t.Errorf("O on single line = %q, want Yabc", got)
+	}
+	if len(b2.lines) != 1 {
+		t.Errorf("single-line buffer grew to %d rows", len(b2.lines))
+	}
+}
+
+func TestSingleLineLinewisePasteFlattens(t *testing.T) {
+	// yy then p on a single line must paste inline, not create a row.
+	b := singleLineNormal("abc", 0)
+	b.Feed("y")
+	b.Feed("y") // yank the line linewise
+	b.Feed("$") // move to end
+	b.Feed("p") // paste
+	if len(b.lines) != 1 {
+		t.Fatalf("linewise paste grew single-line buffer to %d rows", len(b.lines))
+	}
+	if got := b.Text(); got != "abcabc" {
+		t.Errorf("single-line linewise paste = %q, want abcabc", got)
+	}
+}
+
+func TestSetText(t *testing.T) {
+	b := New("old", true)
+	b.SetText("https://new.test")
+	if b.Text() != "https://new.test" {
+		t.Errorf("SetText = %q", b.Text())
+	}
+	// Cursor lands at end of the new text.
+	if _, col := b.Cursor(); col != len("https://new.test") {
+		t.Errorf("SetText cursor col = %d, want %d", col, len("https://new.test"))
+	}
+}
+
+func TestSetTextClearsHistoryAndPendingState(t *testing.T) {
+	b := New("old", true)
+	b.SetMode(Normal)
+	b.Feed("d") // pending operator from the old contents
+	b.SetText("new")
+	if _, col := b.Cursor(); col != len("new")-1 {
+		t.Fatalf("SetText in Normal mode should clamp to last char, col=%d", col)
+	}
+
+	// The stale pending 'd' must not combine with this key into a delete, and the
+	// old undo stack must not resurrect the previous contents.
+	b.Feed("d")
+	if b.Text() != "new" {
+		t.Fatalf("stale pending operator affected new text: %q", b.Text())
+	}
+	b.Feed("u")
+	if b.Text() != "new" {
+		t.Errorf("undo after SetText = %q, want fresh text", b.Text())
+	}
+}
+
+func TestCursorEndPreservesHistory(t *testing.T) {
+	b := New("abc", true)
+	b.SetMode(Normal)
+	b.Feed("x") // delete 'c', recording undo
+	if b.Text() != "ab" {
+		t.Fatalf("setup delete = %q", b.Text())
+	}
+	b.CursorEnd()
+	b.SetMode(Normal)
+	b.Feed("u")
+	if b.Text() != "abc" {
+		t.Errorf("CursorEnd should not clear undo history, got %q", b.Text())
+	}
+}

@@ -39,6 +39,13 @@ func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: [
 // sub-mode (method/timeout/nav shortcuts), the way pressing esc does.
 func urlNormal(m Model) Model { return step(m, keyEsc) }
 
+// sendNow fires the request via the :send command — the keyboard send path now
+// that the Enter key no longer sends.
+func sendNow(m Model) Model {
+	tm, _ := m.executeCommand("send")
+	return tm.(Model)
+}
+
 var (
 	keyEsc   = tea.KeyMsg{Type: tea.KeyEsc}
 	keyEnter = tea.KeyMsg{Type: tea.KeyEnter}
@@ -138,28 +145,32 @@ func TestURLBarTypesDirectly(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// On launch the URL bar is ready for input — no 'i' needed.
-	if !base.url.Focused() {
+	if !base.urlInsert() {
 		t.Fatal("URL bar should accept typing immediately on launch")
 	}
 	m := step(base, runes("https://api.test/x"))
-	if got := m.url.Value(); got != "https://api.test/x" {
+	if got := m.url.Text(); got != "https://api.test/x" {
 		t.Fatalf("typed URL = %q, want the literal text", got)
 	}
 	// Characters that are ex-command/normal keys elsewhere are just text here.
 	m = step(m, runes("?a=:b["))
-	if got := m.url.Value(); got != "https://api.test/x?a=:b[" {
+	if got := m.url.Text(); got != "https://api.test/x?a=:b[" {
 		t.Errorf("special chars should type into the URL, got %q", got)
 	}
 
-	// Enter sends rather than inserting a newline.
-	sent, cmd := m.Update(keyEnter)
-	if !sent.(Model).sending || cmd == nil {
-		t.Error("enter in the URL bar should send the request")
+	// Enter no longer sends — it's a harmless no-op in the single-line buffer.
+	// Sending is only via :send.
+	notSent, _ := m.Update(keyEnter)
+	if notSent.(Model).sending {
+		t.Error("enter in the URL bar must NOT send the request")
+	}
+	if s := sendNow(m); !s.sending {
+		t.Error(":send should fire the request")
 	}
 
 	// esc drops to the NORMAL sub-mode (blurred), where shortcut keys work.
 	n := urlNormal(m)
-	if n.url.Focused() {
+	if n.urlInsert() {
 		t.Error("esc should leave the URL input (drop to NORMAL)")
 	}
 	if n.focus != focusURL {
@@ -167,15 +178,73 @@ func TestURLBarTypesDirectly(t *testing.T) {
 	}
 }
 
+// TestURLNormalModeVimEdits exercises real Vim editing in the URL bar's NORMAL
+// sub-mode: motions, delete, change-to-end, paste, and undo.
+func TestURLNormalModeVimEdits(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m := step(base, runes("https://api.test/oldpath"))
+	m = urlNormal(m) // drop to NORMAL (cursor on last char)
+
+	// x deletes the char under the cursor (the trailing 'h').
+	m = step(m, runes("x"))
+	if got := m.url.Text(); got != "https://api.test/oldpat" {
+		t.Fatalf("x = %q, want …oldpat", got)
+	}
+
+	// u undoes the delete.
+	m = step(m, runes("u"))
+	if got := m.url.Text(); got != "https://api.test/oldpath" {
+		t.Fatalf("u = %q, want …oldpath restored", got)
+	}
+
+	// 0 to line start, then w/w to jump words; C changes to end of line.
+	m = step(m, runes("0"))
+	m = step(m, runes("C")) // delete to end, enter Insert
+	if !m.urlInsert() {
+		t.Fatal("C should enter Insert mode")
+	}
+	m = step(m, runes("https://new.test/ping"))
+	if got := m.url.Text(); got != "https://new.test/ping" {
+		t.Fatalf("C + retype = %q", got)
+	}
+
+	// Back to NORMAL; dd clears the line, then verify empty.
+	m = urlNormal(m)
+	m = step(m, runes("d"))
+	m = step(m, runes("d"))
+	if got := m.url.Text(); got != "" {
+		t.Errorf("dd should clear the URL, got %q", got)
+	}
+}
+
+// TestURLNormalWordDeleteAndPaste covers b/w word motion, dw, and p.
+func TestURLNormalWordDeleteAndPaste(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m := urlNormal(step(base, runes("alpha beta")))
+
+	// b moves back to the start of "beta"; dw deletes the word (register holds it).
+	m = step(m, runes("b"))
+	m = step(m, runes("d"))
+	m = step(m, runes("w"))
+	if got := m.url.Text(); got != "alpha " {
+		t.Fatalf("dw = %q, want 'alpha '", got)
+	}
+	// p pastes the deleted "beta" back after the cursor. Single-line stays one line.
+	m = step(m, runes("p"))
+	if got := m.url.Text(); got != "alpha beta" {
+		t.Errorf("p after dw = %q, want 'alpha beta'", got)
+	}
+}
+
 func TestTimeoutEditableInline(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 
-	// Timeout is no longer a pane/tab stop: the 't' shortcut from the URL NORMAL
-	// sub-mode jumps straight to editing the inline field, without moving focus
-	// off the URL bar.
-	m := step(urlNormal(base), runes("t"))
+	// Timeout is no longer a pane/tab stop: the ,t leader jumps straight to
+	// editing the inline field, without moving focus off the URL bar. (URL
+	// NORMAL mode itself is now pure Vim, so t is free for motions.)
+	m := step(step(urlNormal(base), runes(",")), runes("t"))
 	if !m.timeoutInput.Focused() || !m.editing() {
-		t.Fatalf("t from URL normal should begin editing the timeout, focused=%v editing=%v",
+		t.Fatalf(",t should begin editing the timeout, focused=%v editing=%v",
 			m.timeoutInput.Focused(), m.editing())
 	}
 	if m.focus != focusURL {
@@ -307,8 +376,8 @@ func TestImportCurlCommand(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	tm, _ := m.executeCommand(`import curl -X POST https://api.test/login -H 'Accept: application/json' -d '{"u":1}'`)
 	m = tm.(Model)
-	if m.req.Method != "POST" || m.url.Value() != "https://api.test/login" {
-		t.Errorf("imported method/url = %q / %q", m.req.Method, m.url.Value())
+	if m.req.Method != "POST" || m.url.Text() != "https://api.test/login" {
+		t.Errorf("imported method/url = %q / %q", m.req.Method, m.url.Text())
 	}
 	built := m.buildRequest()
 	if built.Body != `{"u":1}` {
@@ -334,12 +403,13 @@ func TestImportCurlGuardsUnsavedEdits(t *testing.T) {
 	if m.pendingAction != pendingImportCurl {
 		t.Fatalf("a dirty import should arm the save prompt, got pendingAction=%v", m.pendingAction)
 	}
-	if m.url.Value() != "https://existing.test" {
-		t.Errorf("import must not apply before the prompt is resolved, url=%q", m.url.Value())
+	if m.url.Text() != "https://existing.test" {
+		t.Errorf("import must not apply before the prompt is resolved, url=%q", m.url.Text())
 	}
 	// 'n' discards the edits and performs the deferred import.
 	tm, _ = m.resolveSaveConfirm(runes("n"))
-	if got := tm.(Model).url.Value(); got != "https://new.test" {
+	nm := tm.(Model)
+	if got := nm.url.Text(); got != "https://new.test" {
 		t.Errorf("after discarding, the import should apply; url=%q", got)
 	}
 }
@@ -361,7 +431,7 @@ func TestImportCurlBadInput(t *testing.T) {
 
 func TestCopyCurlCommandRoutes(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("https://api.test/x")
+	m.url.SetText("https://api.test/x")
 	tm, _ := m.executeCommand("copy curl")
 	// Clipboard availability varies by environment; either way a status is set
 	// and the command must not fall through to the ":copy old new" usage error.
@@ -372,7 +442,7 @@ func TestCopyCurlCommandRoutes(t *testing.T) {
 
 func TestRawPrettyToggle(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("https://x.test")
+	m.url.SetText("https://x.test")
 	m = step(m, keyEnter)
 	m = step(m, responseMsg{seq: m.sendSeq, resp: model.Response{
 		Status: "200 OK", StatusCode: 200, Body: []byte(`{"a":1,"b":2}`),
@@ -602,24 +672,46 @@ func TestAppendQuery(t *testing.T) {
 	}
 }
 
-func TestEnterSendsAndGoesInFlight(t *testing.T) {
+func TestSendCommandGoesInFlight(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("https://example.test")
-	m2, cmd := m.Update(keyEnter)
+	m.url.SetText("https://example.test")
+	m2, cmd := m.executeCommand("send")
 	if !m2.(Model).sending {
-		t.Error("Enter should put the model in-flight")
+		t.Error(":send should put the model in-flight")
 	}
 	if cmd == nil {
-		t.Error("Enter should return a command")
+		t.Error(":send should return a command")
+	}
+}
+
+// TestEnterDoesNotSend guards the decision that the Enter key never fires a
+// request — use :send or the SEND button instead.
+func TestEnterDoesNotSend(t *testing.T) {
+	// From the URL bar in both Insert and NORMAL sub-modes, and from the method
+	// pane, Enter must not start a request.
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	base.url.SetText("https://example.test")
+
+	for _, tc := range []struct {
+		name string
+		m    Model
+	}{
+		{"url insert", base},
+		{"url normal", urlNormal(base)},
+		{"method pane", base.setFocus(focusMethod)},
+	} {
+		if got := step(tc.m, keyEnter); got.sending {
+			t.Errorf("%s: Enter must not send", tc.name)
+		}
 	}
 }
 
 func TestSendWarnsOnEmptyURL(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("   ") // whitespace-only counts as empty
-	m = step(m, keyEnter)
+	m.url.SetText("   ") // whitespace-only counts as empty
+	m = sendNow(m)
 	if m.sending {
-		t.Fatal("Enter with an empty URL must not start a request")
+		t.Fatal(":send with an empty URL must not start a request")
 	}
 	if !strings.Contains(m.statusMsg, "URL is empty") {
 		t.Errorf("statusMsg = %q, want it to say the URL is empty", m.statusMsg)
@@ -628,10 +720,10 @@ func TestSendWarnsOnEmptyURL(t *testing.T) {
 
 func TestSendWarnsOnUnresolvedVars(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("https://{{host}}/ping")
-	m = step(m, keyEnter)
+	m.url.SetText("https://{{host}}/ping")
+	m = sendNow(m)
 	if !m.sending {
-		t.Fatal("Enter should still send even with unresolved vars")
+		t.Fatal(":send should still send even with unresolved vars")
 	}
 	if !strings.Contains(m.statusMsg, "{{host}}") {
 		t.Errorf("statusMsg = %q, want it to warn about {{host}}", m.statusMsg)
@@ -639,8 +731,8 @@ func TestSendWarnsOnUnresolvedVars(t *testing.T) {
 
 	// A fully-resolved send leaves no unresolved-var warning.
 	m2 := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m2.url.SetValue("https://example.test/ping")
-	m2 = step(m2, keyEnter)
+	m2.url.SetText("https://example.test/ping")
+	m2 = sendNow(m2)
 	if strings.Contains(m2.statusMsg, "unresolved") {
 		t.Errorf("statusMsg = %q, want no unresolved-var warning", m2.statusMsg)
 	}
@@ -655,7 +747,7 @@ func TestSendWarnsOnUnresolvedQueryVar(t *testing.T) {
 		URL:    "https://example.test/x",
 		Query:  []model.KV{{Key: "q", Value: "{{tok}}", Enabled: true}},
 	})
-	m = step(m, keyEnter)
+	m = sendNow(m)
 	if !strings.Contains(m.statusMsg, "{{tok}}") {
 		t.Errorf("statusMsg = %q, want warning about {{tok}} in the query", m.statusMsg)
 	}
@@ -665,7 +757,7 @@ func TestWriteQuitBlockedWhenSaveFails(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.collectionStore = failingStore(t)
 	m.currentName = "api/thing"
-	m.url.SetValue("https://example.test")
+	m.url.SetText("https://example.test")
 
 	_, cmd := m.executeCommand("wq")
 	if isQuit(cmd) {
@@ -677,7 +769,7 @@ func TestSavePromptKeepsWorkWhenSaveFails(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.collectionStore = failingStore(t)
 	m.currentName = "api/thing"
-	m.url.SetValue("https://changed.test") // make it dirty so quitting arms the prompt
+	m.url.SetText("https://changed.test") // make it dirty so quitting arms the prompt
 
 	tm, _ := m.guardedQuit()
 	m = tm.(Model)
@@ -700,13 +792,13 @@ func TestSavePromptKeepsWorkWhenSaveFails(t *testing.T) {
 func TestNewSavedRequestDoesNotClaimNameOnFailure(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.collectionStore = failingStore(t)
-	m.url.SetValue("https://keep.test")
+	m.url.SetText("https://keep.test")
 	m = m.newSavedRequest("api/new")
 	if m.currentName == "api/new" {
 		t.Error("currentName must not be set when the create/save failed")
 	}
-	if m.url.Value() != "https://keep.test" {
-		t.Errorf("failed create must not blank the editor, url=%q", m.url.Value())
+	if m.url.Text() != "https://keep.test" {
+		t.Errorf("failed create must not blank the editor, url=%q", m.url.Text())
 	}
 	if !strings.Contains(m.statusMsg, "failed") {
 		t.Errorf("statusMsg = %q, want a failure message", m.statusMsg)
@@ -715,10 +807,10 @@ func TestNewSavedRequestDoesNotClaimNameOnFailure(t *testing.T) {
 
 func TestEscCancelsInFlight(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.url.SetValue("https://example.test")
-	m = step(m, keyEnter)
+	m.url.SetText("https://example.test")
+	m = sendNow(m)
 	if !m.sending {
-		t.Fatal("Enter should put the model in-flight")
+		t.Fatal(":send should put the model in-flight")
 	}
 	inFlightSeq := m.sendSeq
 

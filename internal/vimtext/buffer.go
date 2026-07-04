@@ -53,6 +53,27 @@ func New(text string, singleLine bool) *Buffer {
 	return b
 }
 
+// SetText replaces the buffer contents, placing the cursor at the end of the
+// (first) line. The mode is left unchanged; the owner manages it. Programmatic
+// replacement starts a fresh edit history so undo/redo and pending Vim commands
+// from a previous request cannot leak into the new contents.
+func (b *Buffer) SetText(text string) {
+	b.setText(text)
+	b.col = len(b.lines[b.row])
+	b.clampForMode()
+	b.resetTransient()
+	b.undo = nil
+	b.redo = nil
+}
+
+// CursorEnd moves the cursor to the end of the current line without changing
+// text or history. Owners use this when focusing an already-loaded single-line
+// field, where SetText would be too destructive.
+func (b *Buffer) CursorEnd() {
+	b.col = len(b.cur())
+	b.clampForMode()
+}
+
 func (b *Buffer) setText(text string) {
 	raw := strings.Split(text, "\n")
 	b.lines = make([][]rune, len(raw))
@@ -94,6 +115,9 @@ func (b *Buffer) Lines() []string {
 
 // SetMode forces a mode (used by the owner when entering a field).
 func (b *Buffer) SetMode(m Mode) {
+	if b.mode != m {
+		b.resetTransient()
+	}
 	b.mode = m
 	if m == Normal {
 		b.clampNormal()
@@ -113,6 +137,22 @@ func (b *Buffer) Feed(key string) (release bool) {
 // --- helpers ---
 
 func (b *Buffer) cur() []rune { return b.lines[b.row] }
+
+func (b *Buffer) clampForMode() {
+	if b.mode == Normal {
+		b.clampNormal()
+		return
+	}
+	b.clampInsert()
+}
+
+func (b *Buffer) resetTransient() {
+	b.pendingOp = 0
+	b.opCount = 0
+	b.pendingG = false
+	b.pendingR = false
+	b.count = 0
+}
 
 func (b *Buffer) clampNormal() {
 	if b.row < 0 {

@@ -12,7 +12,7 @@ var helpSections = []struct {
 		{"ctrl+w  ↑/↓/←/→", "move focus between panes (arrows too)"},
 		{"tab / shift+tab", "cycle focus (reading order)"},
 		{"arrows", "move within the focused pane (like h/j/k/l)"},
-		{"⏎", "send request"},
+		{":send", "send the request"},
 		{":", "command line"},
 		{"?", "toggle this help"},
 		{",n", "show / hide collections tree"},
@@ -24,10 +24,9 @@ var helpSections = []struct {
 	}},
 	{"URL bar (types directly)", [][2]string{
 		{"type", "edit the URL — no i needed"},
-		{"⏎", "send request"},
 		{"tab / ^w", "move to another pane"},
-		{"esc", "NORMAL sub-mode (shortcuts below)"},
-		{"t", "edit inline timeout (NORMAL)"},
+		{"esc", "NORMAL sub-mode: Vim edits (x w b C dd p u …)"},
+		{",t", "edit inline timeout (leader)"},
 	}},
 	{"Collections / NerdTree", [][2]string{
 		{"j / k  ·  gg / G", "move selection  ·  P jump to top"},
@@ -75,8 +74,8 @@ var helpSections = []struct {
 		{":method POST", "set HTTP method"},
 		{":set tok=abc", "define a {{tok}} variable"},
 		{":timeout 10s", "set request timeout"},
-		{":q  ·  :q!", "quit  ·  quit discarding edits"},
-		{":wq  ·  :x", "save current request, then quit"},
+		{":q  ·  :q!", "quit  ·  quit discarding edits (:qa aliases too)"},
+		{":wq  ·  :x", "save current request, then quit (:wqa too)"},
 		{":help", "help overlay"},
 	}},
 }

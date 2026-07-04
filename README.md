@@ -26,12 +26,12 @@ go run .          # or: go build -o volley . && ./volley
 | `ctrl+w` `h/j/k/l` | move focus between panes (Vim window nav)   |
 | arrow keys     | mirror `h/j/k/l` — move **within** the focused pane |
 | `tab` / `shift+tab` | cycle focus between panes                  |
-| `⏎`            | send request                                    |
+| `:send` or SEND button | send request                            |
 | **Method pane** | `j`/`k` or `↑`/`↓` cycle the HTTP method (`tab`/`ctrl+w` to reach it) |
 | **URL bar**    | **types directly — just start typing, no `i` needed** |
-| `⏎`            | send · `tab`/`ctrl+w` move to another pane        |
-| `esc` (URL)    | drop to NORMAL sub-mode for the shortcuts below   |
-| `t`            | focus / edit the timeout field (URL NORMAL)       |
+| `tab`/`ctrl+w` | move to another pane                            |
+| `esc` (URL)    | drop to NORMAL sub-mode with Vim edits (`x`, `w`, `b`, `C`, `dd`, `p`, `u`, …) |
+| `,t`           | focus / edit the timeout field                   |
 | `i` / `a`      | edit focused field / cell (headers, query, body)  |
 | `esc`          | leave INSERT, back to NORMAL                     |
 | `,n`           | show / hide collections tree                    |
@@ -79,7 +79,8 @@ go run .          # or: go build -o volley . && ./volley
 | `:ls`              | focus/refresh the collections tree                |
 | `:method POST`     | set the HTTP method                               |
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
-| `:timeout 10s`     | set the request timeout (or press `t` in URL pane)|
+| `:send`        | send the current request                         |
+| `:timeout 10s` | set the request timeout (or press `,t`)          |
 | `:help`            | help overlay                                      |
 | `:q` · `:q!`       | quit · quit discarding unsaved changes            |
 | `:wq` / `:x`       | save the current request, then quit               |

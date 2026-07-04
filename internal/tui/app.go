@@ -19,6 +19,7 @@ import (
 	"github.com/tabularasa/volley/internal/httpx"
 	"github.com/tabularasa/volley/internal/model"
 	"github.com/tabularasa/volley/internal/vars"
+	"github.com/tabularasa/volley/internal/vimtext"
 )
 
 // focus identifies which pane currently receives navigation/edit keys.
@@ -64,7 +65,7 @@ type Model struct {
 	focus focus
 
 	req          model.Request
-	url          textinput.Model
+	url          vimtext.Buffer // URL editor: a single-line modal (Normal/Insert) vim buffer
 	timeoutInput textinput.Model
 	methodIdx    int
 
@@ -129,12 +130,17 @@ func homeShorten(path string) string {
 	return path
 }
 
+// urlPlaceholder is shown in the URL bar when it is empty and unfocused.
+const urlPlaceholder = "https://api.example.com/v1/ping"
+
 // New builds the root model with a blank request ready to edit.
 func New() Model {
-	ti := textinput.New()
-	ti.Placeholder = "https://api.example.com/v1/ping"
-	ti.Prompt = ""
-	ti.Focus() // the URL bar accepts typing immediately on launch
+	// The URL bar is a single-line vim buffer; it starts in Insert so the bar
+	// accepts typing immediately on launch (focus defaults to focusURL). It is
+	// held by value so each Model copy owns its own URL state (matching the old
+	// textinput and the branch-and-reuse the tests rely on).
+	urlBuf := vimtext.New("", true)
+	urlBuf.SetMode(vimtext.Insert)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -159,7 +165,7 @@ func New() Model {
 	m := Model{
 		req:             model.NewRequest(),
 		baseline:        model.NewRequest(),
-		url:             ti,
+		url:             *urlBuf,
 		timeoutInput:    timeoutInput,
 		spin:            sp,
 		vp:              vp,
@@ -189,10 +195,18 @@ func vimViewportKeys() viewport.KeyMap {
 	}
 }
 
-// editing reports whether a child field is capturing keys (insert OR a
-// field-level Vim normal mode). This gates pane navigation.
+// urlInsert reports whether the URL bar is focused and in text-entry (Insert)
+// mode — the vim-buffer equivalent of the old textinput's Focused() state.
+func (m Model) urlInsert() bool {
+	return m.focus == focusURL && m.url.Mode() == vimtext.Insert
+}
+
+// editing reports whether a child field is capturing keys in Insert mode. This
+// gates whether keys route to text entry (routeEditing) vs pane navigation. The
+// URL bar's Vim NORMAL sub-mode is intentionally NOT "editing": its motion and
+// operator keys (x/w/b/C/p/u…) flow through updateNormal → updateURLNormal.
 func (m Model) editing() bool {
-	if m.url.Focused() || m.timeoutInput.Focused() {
+	if m.urlInsert() || m.timeoutInput.Focused() {
 		return true
 	}
 	return m.focus == focusRequest && m.reqPane.editing()
@@ -201,7 +215,7 @@ func (m Model) editing() bool {
 // inInsert reports whether the active field is actually inserting text, for
 // the INSERT/NORMAL status tag (a field can be captured but in Vim-normal).
 func (m Model) inInsert() bool {
-	if m.url.Focused() || m.timeoutInput.Focused() {
+	if m.urlInsert() || m.timeoutInput.Focused() {
 		return true
 	}
 	return m.focus == focusRequest && m.reqPane.inInsert()
@@ -219,7 +233,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		l := m.computeLayout()
 		m.vp.Width = l.respInnerW
 		m.vp.Height = l.respViewportH
-		m.url.Width = urlInputWidth(l)
 		m.collectionPane.width = l.collectionInnerW
 		m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
 		return m, nil
@@ -285,39 +298,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Non-key messages (e.g. text-input cursor blink) go to whichever bubbles
+	// textinput is active. The URL bar is a vimtext buffer and needs none.
 	var cmd tea.Cmd
-	m.url, cmd = m.url.Update(msg)
+	if m.cmdActive {
+		m.cmd, cmd = m.cmd.Update(msg)
+	} else if m.timeoutInput.Focused() {
+		m.timeoutInput, cmd = m.timeoutInput.Update(msg)
+	}
 	return m, cmd
 }
 
 // routeEditing forwards keys to the active text field.
 func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.url.Focused() {
-		// The URL bar types like a normal text field. A few structural keys are
-		// intercepted so you can send and move panes without an esc dance.
+	if m.urlInsert() {
+		// The URL bar types like a text field while inserting. A few structural
+		// keys are intercepted so you can send and move panes without an esc dance;
+		// everything else feeds the vim buffer (which handles esc→NORMAL itself).
 		switch msg.Type {
-		case tea.KeyEsc:
-			// Drop to the URL NORMAL sub-mode (method h/l, timeout t, j/L nav).
-			m.url.Blur()
-			m.req.URL = m.url.Value()
-			return m, nil
-		case tea.KeyEnter:
-			return m.send()
 		case tea.KeyTab:
 			return m.cycleFocus(1), nil
 		case tea.KeyShiftTab:
 			return m.cycleFocus(-1), nil
 		case tea.KeyCtrlW:
-			// Begin the Vim window-nav chord; blur so the next key is read as nav.
-			m.url.Blur()
+			// Begin the Vim window-nav chord; leave insert so the next key is nav.
+			m.url.SetMode(vimtext.Normal)
 			m.pendingWindow = true
 			return m, nil
 		}
-		// left/right move the cursor; up/down are ignored by the single-line input.
-		var cmd tea.Cmd
-		m.url, cmd = m.url.Update(msg)
-		m.req.URL = m.url.Value()
-		return m, cmd
+		// Enter is intentionally NOT a send shortcut — sending is only via :send.
+		// In this single-line buffer, feeding "enter" is a harmless no-op.
+		m.url.Feed(msg.String()) // includes esc → drops to NORMAL, staying focused
+		m.req.URL = m.url.Text()
+		return m, nil
 	}
 	if m.timeoutInput.Focused() {
 		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEnter {
@@ -343,8 +356,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Leader-style shortcuts.
 	if m.pendingComma {
 		m.pendingComma = false
-		if msg.String() == "n" {
+		switch msg.String() {
+		case "n":
 			return m.toggleCollectionPane(), nil
+		case "t":
+			return m.beginEditTimeout(), textinput.Blink
 		}
 		return m, nil
 	}
@@ -390,7 +406,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ",":
 		m.pendingComma = true
-		m.statusMsg = "leader: n toggle tree"
+		m.statusMsg = "leader: n toggle tree · t edit timeout"
 		return m, nil
 	case "tab":
 		return m.cycleFocus(1), nil
@@ -434,26 +450,18 @@ func (m Model) updateMethodNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.cycleMethod(1), nil
 	case "k":
 		return m.cycleMethod(-1), nil
-	case "enter":
-		return m.send()
 	}
 	return m, nil
 }
 
-// updateURLNormal handles NORMAL keys while the URL bar is focused (blurred via
-// esc): i/a resume typing, t edits the timeout, ⏎ sends. Pane moves are tab /
-// ctrl+w.
+// updateURLNormal handles keys while the URL bar is focused in Vim NORMAL mode.
+// It is pure Vim: every key feeds the buffer, so the URL supports the full
+// motion and edit set (x, w, b, e, C, D, dd, cw, p, u, i/a/I/A…). Sending is
+// only via :send. Pane moves stay on tab/ctrl+w and the timeout shortcut is the
+// ,t leader — all handled upstream in updateNormal before reaching here.
 func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "enter":
-		return m.send()
-	case "i", "a":
-		m.url.Focus()
-		m.url.CursorEnd()
-		return m, textinput.Blink
-	case "t":
-		return m.beginEditTimeout(), textinput.Blink
-	}
+	m.url.Feed(msg.String())
+	m.req.URL = m.url.Text()
 	return m, nil
 }
 
@@ -641,8 +649,6 @@ func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingG = false
 	}
 	switch msg.String() {
-	case "enter":
-		return m.send()
 	case "g":
 		if m.pendingG {
 			m.vp.GotoTop()
@@ -698,14 +704,14 @@ func (m Model) setFocus(f focus) Model {
 	m.focus = f
 	m.collectionPane.focused = f == focusCollection
 	m.reqPane.setFocused(f == focusRequest)
-	// The URL bar is a plain text field: focusing it begins typing immediately,
-	// leaving it blurs the input. (esc drops to a NORMAL sub-mode for the
-	// method/timeout shortcuts without moving focus.)
+	// Focusing the URL bar begins typing immediately (Insert); leaving it drops
+	// the buffer to NORMAL. (esc within the bar also drops to NORMAL — a vim
+	// sub-mode with the full motion/edit set — without moving focus.)
 	if f == focusURL {
-		m.url.Focus()
+		m.url.SetMode(vimtext.Insert)
 		m.url.CursorEnd()
 	} else {
-		m.url.Blur()
+		m.url.SetMode(vimtext.Normal)
 	}
 	return m
 }
@@ -814,7 +820,7 @@ func (m Model) currentResponseText() string {
 // editable form used both for saving to disk and for unsaved-changes detection.
 func (m Model) rawRequest() model.Request {
 	req := m.req
-	req.URL = m.url.Value()
+	req.URL = m.url.Text()
 	req.Headers = m.reqPane.headersOut()
 	req.Query = m.reqPane.queryOut()
 	req.Body = m.reqPane.bodyOut()
@@ -974,7 +980,7 @@ func (m Model) send() (tea.Model, tea.Cmd) {
 	if m.sending {
 		return m, nil
 	}
-	if strings.TrimSpace(m.url.Value()) == "" {
+	if strings.TrimSpace(m.url.Text()) == "" {
 		m.statusMsg = "cannot send: URL is empty"
 		return m, nil
 	}

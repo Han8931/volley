@@ -53,7 +53,7 @@ func TestEditingMarksDirty(t *testing.T) {
 	if m.dirty() {
 		t.Fatal("a just-loaded request must not be dirty")
 	}
-	m.url.SetValue("https://seed.test/edited")
+	m.url.SetText("https://seed.test/edited")
 	if !m.dirty() {
 		t.Fatal("editing the URL must mark the request dirty")
 	}
@@ -62,7 +62,7 @@ func TestEditingMarksDirty(t *testing.T) {
 func TestSwitchingRequestGuardsUnsavedEdits(t *testing.T) {
 	base, store := seededModel(t)
 	m := base.loadSavedRequest("seed")
-	m.url.SetValue("https://seed.test/edited")
+	m.url.SetText("https://seed.test/edited")
 
 	// Opening another request must NOT silently discard the edit; it arms the prompt.
 	next, _ := m.guardedOpen("other")
@@ -70,7 +70,7 @@ func TestSwitchingRequestGuardsUnsavedEdits(t *testing.T) {
 	if armed.pendingAction != pendingOpenRequest {
 		t.Fatal("opening a request with unsaved edits should arm the save prompt")
 	}
-	if armed.url.Value() != "https://seed.test/edited" {
+	if armed.url.Text() != "https://seed.test/edited" {
 		t.Error("the other request must not load until the prompt is resolved")
 	}
 
@@ -79,20 +79,20 @@ func TestSwitchingRequestGuardsUnsavedEdits(t *testing.T) {
 	if cancelled.pendingAction != pendingNone {
 		t.Error("esc should clear the pending prompt")
 	}
-	if cancelled.url.Value() != "https://seed.test/edited" {
+	if cancelled.url.Text() != "https://seed.test/edited" {
 		t.Error("esc must preserve the in-progress edit")
 	}
 
 	// n: discard and load the other request.
 	discarded := step(armed, runes("n"))
-	if discarded.url.Value() != "https://other.test" {
-		t.Errorf("n should load the other request; url = %q", discarded.url.Value())
+	if discarded.url.Text() != "https://other.test" {
+		t.Errorf("n should load the other request; url = %q", discarded.url.Text())
 	}
 
 	// y: save the edit to disk, then load the other request.
 	saved := step(armed, runes("y"))
-	if saved.url.Value() != "https://other.test" {
-		t.Errorf("y should save then load the other request; url = %q", saved.url.Value())
+	if saved.url.Text() != "https://other.test" {
+		t.Errorf("y should save then load the other request; url = %q", saved.url.Text())
 	}
 	reloaded, err := store.Load("seed")
 	if err != nil {
@@ -106,7 +106,7 @@ func TestSwitchingRequestGuardsUnsavedEdits(t *testing.T) {
 func TestQuitGuardsAndForceQuit(t *testing.T) {
 	base, _ := seededModel(t)
 	m := base.loadSavedRequest("seed")
-	m.url.SetValue("https://seed.test/edited")
+	m.url.SetText("https://seed.test/edited")
 
 	// A normal quit while dirty arms the prompt instead of quitting.
 	q, cmd := m.guardedQuit()
@@ -120,5 +120,39 @@ func TestQuitGuardsAndForceQuit(t *testing.T) {
 	// :q! force-quits, discarding edits.
 	if _, c := m.executeCommand("q!"); !isQuit(c) {
 		t.Error(":q! should force-quit even with unsaved edits")
+	}
+}
+
+// The Vim "all" variants are single-buffer aliases: :qa guards, :qa! forces,
+// :wqa saves-then-quits.
+func TestQuitAllAliases(t *testing.T) {
+	base, _ := seededModel(t)
+	m := base.loadSavedRequest("seed")
+	m.url.SetText("https://seed.test/edited")
+
+	// :qa while dirty arms the prompt instead of quitting.
+	q, cmd := m.executeCommand("qa")
+	if isQuit(cmd) {
+		t.Error(":qa with unsaved edits should prompt, not quit")
+	}
+	if q.(Model).pendingAction != pendingQuit {
+		t.Error(":qa should arm the quit prompt when dirty")
+	}
+
+	// :qa! force-quits, discarding edits.
+	if _, c := m.executeCommand("qa!"); !isQuit(c) {
+		t.Error(":qa! should force-quit even with unsaved edits")
+	}
+
+	// :wqa saves the current request, then quits.
+	if _, c := m.executeCommand("wqa"); !isQuit(c) {
+		t.Fatal(":wqa should save and quit")
+	}
+	reloaded, err := m.collectionStore.Load("seed")
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.URL != "https://seed.test/edited" {
+		t.Errorf(":wqa should have persisted the edit; got %q", reloaded.URL)
 	}
 }

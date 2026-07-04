@@ -9,10 +9,10 @@ type layout struct {
 	collectionInnerW int
 	reqInnerW        int
 	respInnerW       int
-	collectionInnerH int // tree pane height; spans URL + body area
-	bodyInnerH       int // inner height of the request pane / whole lower area
-	respInnerH       int // inner height of the response pane
-	respViewportH    int // scrollable body height inside the response pane
+	collectionInnerH int  // tree pane height; spans URL + body area
+	bodyInnerH       int  // inner height of the request pane / whole lower area
+	respInnerH       int  // inner height of the response pane
+	respViewportH    int  // scrollable body height inside the response pane
 	showTimeout      bool // whether the URL bar has room for the inline timeout readout
 }
 
@@ -76,7 +76,7 @@ func (m Model) computeLayout() layout {
 	urlW := urlTotalW - borderOverhead
 	// Show the inline timeout readout only when the URL bar can spare the room
 	// for it and the SEND button while keeping the input usably wide.
-	showTimeout := (urlW - 2 - 1 - len(sendButtonText)) - (1 + timeoutReserve) >= minURLInputW
+	showTimeout := (urlW-2-1-len(sendButtonText))-(1+timeoutReserve) >= minURLInputW
 	bodyAvail := rightTotalW - gap - 2*borderOverhead
 	if bodyAvail < 2 {
 		bodyAvail = 2

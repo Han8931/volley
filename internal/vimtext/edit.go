@@ -1,6 +1,9 @@
 package vimtext
 
-import "unicode"
+import (
+	"strings"
+	"unicode"
+)
 
 // mul combines an operator count and a motion count (both default to 1).
 func mul(a, b int) int {
@@ -206,6 +209,16 @@ func (b *Buffer) toggleCase(n int) {
 }
 
 func (b *Buffer) openLine(at int) {
+	if b.singleLine {
+		// A single-line buffer never grows rows: o appends at the end of the
+		// line, O inserts at the start — both then enter Insert via the caller.
+		if at > b.row {
+			b.col = len(b.cur())
+		} else {
+			b.col = 0
+		}
+		return
+	}
 	if at < 0 {
 		at = 0
 	}
@@ -221,7 +234,7 @@ func (b *Buffer) paste(after bool) {
 		return
 	}
 	b.pushUndo()
-	if b.regLinewise {
+	if b.regLinewise && !b.singleLine {
 		at := b.row + 1
 		if !after {
 			at = b.row
@@ -233,7 +246,9 @@ func (b *Buffer) paste(after bool) {
 		b.col = firstNonBlank(b.cur())
 		return
 	}
-	text := []rune(b.register[0])
+	// Charwise paste (and any paste in a single-line buffer: a linewise
+	// register is flattened inline so no new rows appear).
+	text := []rune(strings.Join(b.register, ""))
 	line := b.cur()
 	pos := b.col
 	if after && len(line) > 0 {

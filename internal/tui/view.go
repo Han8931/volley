@@ -63,6 +63,31 @@ func (m Model) paneStyle(f focus, w, h int) lipgloss.Style {
 		Padding(0, 1)
 }
 
+// renderURLField renders the URL bar's contents. When the bar is focused it
+// draws a reverse-video block cursor at the buffer's cursor column (in both
+// Insert and NORMAL modes), scrolling horizontally so the cursor stays visible;
+// otherwise it shows the text, or a dim placeholder when empty.
+func (m Model) renderURLField(width int) string {
+	text := m.url.Text()
+	if m.focus != focusURL {
+		if text == "" {
+			return lipgloss.NewStyle().Foreground(colDim).Render(truncateRunes(urlPlaceholder, width))
+		}
+		return truncateRunes(text, width)
+	}
+	_, col := m.url.Cursor()
+	runes := []rune(text)
+	start := 0
+	if width > 0 && col >= width {
+		start = col - width + 1
+	}
+	end := len(runes)
+	if width > 0 && end > start+width {
+		end = start + width
+	}
+	return renderCursorLine(string(runes[start:end]), col-start)
+}
+
 // viewMethodPane renders the standalone HTTP-method selector to the left of the
 // URL bar. It cycles with j/k or ↑/↓ when focused.
 func (m Model) viewMethodPane(l layout) string {
@@ -73,12 +98,7 @@ func (m Model) viewMethodPane(l layout) string {
 
 func (m Model) viewURLBar(l layout) string {
 	urlW := urlInputWidth(l)
-	urlView := m.url.View()
-	if !m.url.Focused() && m.url.Value() == "" {
-		urlView = lipgloss.NewStyle().Foreground(colDim).Render(truncateRunes(m.url.Placeholder, urlW))
-	} else if lipgloss.Width(urlView) > urlW {
-		urlView = truncateRunes(urlView, urlW)
-	}
+	urlView := m.renderURLField(urlW)
 
 	// The right edge holds the SEND button, preceded by the inline timeout
 	// readout when the bar has room (or is actively being edited).
@@ -141,7 +161,7 @@ func urlInputWidth(l layout) int {
 
 func (m Model) sendButtonView() string {
 	st := lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(colOK).Bold(true)
-	if m.sending || m.url.Value() == "" {
+	if m.sending || strings.TrimSpace(m.url.Text()) == "" {
 		st = st.Foreground(colFg).Background(colDim)
 	}
 	return st.Render(sendButtonText)

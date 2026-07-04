@@ -99,7 +99,7 @@ func TestSetVariableExpandsInRequest(t *testing.T) {
 	m = step(m, runes("set tok=secret"))
 	m = step(m, keyEnter)
 
-	m.url.SetValue("https://x.test/{{tok}}")
+	m.url.SetText("https://x.test/{{tok}}")
 	if got := m.buildRequest().URL; got != "https://x.test/secret" {
 		t.Errorf("built URL = %q, want expanded", got)
 	}
