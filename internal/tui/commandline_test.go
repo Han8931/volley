@@ -11,7 +11,9 @@ import (
 )
 
 func sized() Model {
-	return step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	// The URL bar types directly (so ':' and '?' are URL characters there);
+	// drop to its NORMAL sub-mode so these ex-command tests can reach ':'/'?'.
+	return urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
 }
 
 func TestCommandSetMethod(t *testing.T) {

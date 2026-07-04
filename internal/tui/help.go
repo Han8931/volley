@@ -9,19 +9,25 @@ var helpSections = []struct {
 }{
 	{"Global", [][2]string{
 		{"ctrl+w  h/j/k/l", "move focus between panes (Vim windows)"},
-		{"arrows", "move focus directionally"},
-		{"tab / shift+tab", "cycle focus"},
+		{"ctrl+w  ↑/↓/←/→", "move focus between panes (arrows too)"},
+		{"tab / shift+tab", "cycle focus (reading order)"},
+		{"arrows", "move within the focused pane (like h/j/k/l)"},
 		{"⏎", "send request"},
 		{":", "command line"},
 		{"?", "toggle this help"},
 		{",n", "show / hide collections tree"},
-		{"q / :q", "quit"},
+		{"q / :q", "quit (prompts if unsaved)"},
 	}},
-	{"URL bar", [][2]string{
-		{"i / a", "edit URL"},
-		{"h / l", "previous / next HTTP method"},
-		{"m", "next HTTP method"},
-		{"esc", "leave insert mode"},
+	{"Method pane", [][2]string{
+		{"j / k  ·  ↑ / ↓", "cycle the HTTP method"},
+		{"tab / ^w", "reach it from the URL bar"},
+	}},
+	{"URL bar (types directly)", [][2]string{
+		{"type", "edit the URL — no i needed"},
+		{"⏎", "send request"},
+		{"tab / ^w", "move to another pane"},
+		{"esc", "NORMAL sub-mode (shortcuts below)"},
+		{"t", "focus / edit timeout (NORMAL)"},
 	}},
 	{"Collections / NerdTree", [][2]string{
 		{"j / k  ·  gg / G", "move selection  ·  P jump to top"},
@@ -66,7 +72,9 @@ var helpSections = []struct {
 		{":method POST", "set HTTP method"},
 		{":set tok=abc", "define a {{tok}} variable"},
 		{":timeout 10s", "set request timeout"},
-		{":help  ·  :q", "help  ·  quit"},
+		{":q  ·  :q!", "quit  ·  quit discarding edits"},
+		{":wq  ·  :x", "save current request, then quit"},
+		{":help", "help overlay"},
 	}},
 }
 

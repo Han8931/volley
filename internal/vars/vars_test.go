@@ -1,6 +1,7 @@
 package vars
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/tabularasa/volley/internal/model"
@@ -50,5 +51,31 @@ func TestApply(t *testing.T) {
 	}
 	if out.Body != `{"who":"users"}` {
 		t.Errorf("body = %q", out.Body)
+	}
+}
+
+func TestUnresolved(t *testing.T) {
+	// A fully-resolved request reports nothing.
+	if got := Unresolved(model.Request{URL: "https://x.test/ok", Body: "done"}); len(got) != 0 {
+		t.Errorf("resolved request should report no missing vars, got %v", got)
+	}
+
+	// Leftover placeholders are collected across URL, body and enabled headers,
+	// de-duplicated and sorted; disabled headers are ignored (they aren't sent).
+	req := model.Request{
+		URL:  "https://{{host}}/{{path}}",
+		Body: "token={{token}} and {{host}}",
+		Headers: []model.Header{
+			{Name: "X-Api", Value: "{{token}}", Enabled: true},
+			{Name: "X-Skip", Value: "{{ignored}}", Enabled: false},
+		},
+		Query: []model.KV{
+			{Key: "{{qkey}}", Value: "{{qval}}", Enabled: true},
+			{Key: "off", Value: "{{skipq}}", Enabled: false},
+		},
+	}
+	want := []string{"host", "path", "qkey", "qval", "token"}
+	if got := Unresolved(req); !reflect.DeepEqual(got, want) {
+		t.Errorf("Unresolved = %v, want %v", got, want)
 	}
 }

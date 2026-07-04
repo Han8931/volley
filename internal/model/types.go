@@ -44,7 +44,10 @@ type Response struct {
 	Body       []byte
 	Duration   time.Duration
 	Size       int64
-	Err        error
+	// Truncated is true when the body exceeded the engine's read cap and only
+	// the first Size bytes were kept.
+	Truncated bool
+	Err       error
 }
 
 // Methods is the ordered set of HTTP methods the method picker cycles through.

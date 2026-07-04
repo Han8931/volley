@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -10,18 +9,19 @@ import (
 	"github.com/tabularasa/volley/internal/model"
 )
 
-// responseMsg carries a completed request back into the Update loop.
-type responseMsg struct{ resp model.Response }
+// responseMsg carries a completed request back into the Update loop. seq ties
+// the result to the send that started it, so a response arriving after the user
+// cancelled it (or fired a newer request) is recognized as stale and dropped.
+type responseMsg struct {
+	seq  int
+	resp model.Response
+}
 
-// sendCmd executes req off the UI goroutine and reports the result.
-func sendCmd(req model.Request) tea.Cmd {
+// sendCmd executes req off the UI goroutine and reports the result. The context
+// is owned by the caller (Model.send), which cancels it to abort an in-flight
+// request; the per-request timeout is applied inside httpx.Do.
+func sendCmd(ctx context.Context, seq int, req model.Request) tea.Cmd {
 	return func() tea.Msg {
-		timeout := req.Timeout
-		if timeout <= 0 {
-			timeout = httpx.DefaultTimeout
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
-		defer cancel()
-		return responseMsg{resp: httpx.Do(ctx, req)}
+		return responseMsg{seq: seq, resp: httpx.Do(ctx, req)}
 	}
 }

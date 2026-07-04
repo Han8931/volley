@@ -38,10 +38,14 @@ func renderStatusLine(resp model.Response) string {
 	}
 	status := lipgloss.NewStyle().Foreground(statusColor(resp.StatusCode)).Bold(true).
 		Render(resp.Status)
+	sizeStr := humanize.Bytes(uint64(resp.Size))
+	if resp.Truncated {
+		sizeStr += "+ (truncated)"
+	}
 	meta := lipgloss.NewStyle().Foreground(colDim).Render(fmt.Sprintf(
 		" · %s · %s",
 		resp.Duration.Round(time.Millisecond),
-		humanize.Bytes(uint64(resp.Size)),
+		sizeStr,
 	))
 	return status + meta
 }

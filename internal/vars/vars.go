@@ -5,6 +5,7 @@ package vars
 import (
 	"os"
 	"regexp"
+	"sort"
 
 	"github.com/tabularasa/volley/internal/model"
 )
@@ -37,8 +38,43 @@ func (s Store) Expand(text string) string {
 	})
 }
 
+// Unresolved returns the sorted, unique names of {{placeholders}} that remain
+// in the parts of req that will actually be sent — its URL, body, enabled
+// header names/values, and enabled query keys/values. Query rows are inspected
+// directly rather than via the URL, since folding query params into the URL
+// percent-encodes the braces (so {{x}} would hide as %7B%7Bx%7D%7D). An empty
+// result means every variable resolved.
+func Unresolved(req model.Request) []string {
+	seen := map[string]struct{}{}
+	collect := func(text string) {
+		for _, m := range placeholder.FindAllStringSubmatch(text, -1) {
+			seen[m[1]] = struct{}{}
+		}
+	}
+	collect(req.URL)
+	collect(req.Body)
+	for _, h := range req.Headers {
+		if h.Enabled {
+			collect(h.Name)
+			collect(h.Value)
+		}
+	}
+	for _, q := range req.Query {
+		if q.Enabled {
+			collect(q.Key)
+			collect(q.Value)
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Apply returns a copy of req with placeholders expanded across the URL,
-// header names/values, query values, and body.
+// header names/values, query keys/values, and body.
 func (s Store) Apply(req model.Request) model.Request {
 	out := req
 	out.URL = s.Expand(req.URL)

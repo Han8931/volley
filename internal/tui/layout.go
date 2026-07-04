@@ -4,6 +4,7 @@ package tui
 // current window. Kept in one place so View() and the resize handler agree.
 type layout struct {
 	gap              int
+	methodInnerW     int // method selector pane inner width
 	urlInnerW        int // url bar inner content width
 	collectionInnerW int
 	reqInnerW        int
@@ -17,6 +18,10 @@ type layout struct {
 // borderOverhead is the rendered width/height added by a bordered pane.
 // Lip Gloss' Width/Height values include padding, but not borders.
 const borderOverhead = 2
+
+// methodPaneInnerW is the inner width of the method selector pane: the longest
+// method label ("OPTIONS", 7) plus one cell of horizontal padding each side.
+const methodPaneInnerW = 9
 
 func (m Model) computeLayout() layout {
 	gap := 1
@@ -52,7 +57,13 @@ func (m Model) computeLayout() layout {
 	if rightTotalW < 10 {
 		rightTotalW = 10
 	}
-	urlW := rightTotalW - borderOverhead
+	// The top row is split into a fixed-width method selector and the URL bar.
+	methodTotalW := methodPaneInnerW + borderOverhead
+	urlTotalW := rightTotalW - methodTotalW - gap
+	if urlTotalW < 8 {
+		urlTotalW = 8
+	}
+	urlW := urlTotalW - borderOverhead
 	bodyAvail := rightTotalW - gap - 2*borderOverhead
 	if bodyAvail < 2 {
 		bodyAvail = 2
@@ -86,6 +97,7 @@ func (m Model) computeLayout() layout {
 
 	return layout{
 		gap:              gap,
+		methodInnerW:     methodPaneInnerW,
 		urlInnerW:        urlW,
 		collectionInnerW: collW,
 		reqInnerW:        reqW,

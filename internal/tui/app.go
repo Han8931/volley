@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"strings"
@@ -25,9 +26,34 @@ type focus int
 
 const (
 	focusURL focus = iota
+	focusMethod
+	focusTimeout
 	focusCollection
 	focusRequest
 	focusResponse
+)
+
+// tabOrder is the sequence tab / shift+tab walk, following the screen's natural
+// reading order: the collections sidebar, the method + URL on the top row, then
+// the request pane, then the timeout bar above the response pane.
+var tabOrder = []focus{
+	focusCollection,
+	focusMethod,
+	focusURL,
+	focusRequest,
+	focusTimeout,
+	focusResponse,
+}
+
+// pendingKind identifies a transition deferred behind an unsaved-changes prompt.
+type pendingKind int
+
+const (
+	pendingNone pendingKind = iota
+	pendingOpenRequest
+	pendingNewBlank
+	pendingNewNamed
+	pendingQuit
 )
 
 // Model is the root Bubble Tea model. It owns pane focus and the in-progress
@@ -56,6 +82,8 @@ type Model struct {
 	vp          viewport.Model
 	spin        spinner.Model
 	sending     bool
+	cancel      context.CancelFunc // aborts the in-flight request, if any
+	sendSeq     int                // identifies the in-flight send; stale/cancelled responses are dropped
 	resp        model.Response
 	hasResp     bool
 	respTab     int    // 0 = body, 1 = headers
@@ -82,6 +110,13 @@ type Model struct {
 	confirmDelete  string // name of a request/group awaiting y/n delete confirmation
 	confirmGroup   bool   // whether confirmDelete refers to a group
 	statusMsg      string // ephemeral feedback shown in the status bar
+
+	// baseline is the last saved/loaded request, used to detect unsaved edits.
+	baseline model.Request
+	// pendingAction is a discarding transition (open/new/quit) held behind an
+	// unsaved-changes prompt; pendingArg carries its payload (e.g. a name).
+	pendingAction pendingKind
+	pendingArg    string
 }
 
 // homeShorten replaces the user's home directory prefix with "~".
@@ -97,6 +132,7 @@ func New() Model {
 	ti := textinput.New()
 	ti.Placeholder = "https://api.example.com/v1/ping"
 	ti.Prompt = ""
+	ti.Focus() // the URL bar accepts typing immediately on launch
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -113,10 +149,11 @@ func New() Model {
 	cmd.Prompt = ""
 
 	store := collections.DefaultStore()
-	items, _ := store.List()
+	items, listErr := store.List()
 
-	return Model{
+	m := Model{
 		req:             model.NewRequest(),
+		baseline:        model.NewRequest(),
 		url:             ti,
 		timeoutInput:    timeoutInput,
 		spin:            sp,
@@ -128,6 +165,10 @@ func New() Model {
 		collectionShown: true,
 		vars:            vars.New(),
 	}
+	if listErr != nil {
+		m.statusMsg = "failed to load collections: " + listErr.Error()
+	}
+	return m
 }
 
 // vimViewportKeys maps the response scroll viewport onto Vim motions.
@@ -186,12 +227,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+		// While a request is in flight, esc aborts it rather than doing its
+		// usual mode-exit, so a slow or hung send is never a dead end.
+		if m.sending && msg.Type == tea.KeyEsc {
+			return m.cancelSend()
+		}
 		if m.showHelp {
 			m.showHelp = false // any key dismisses help
 			return m, nil
 		}
 		if m.confirmDelete != "" {
 			return m.resolveDeleteConfirm(msg), nil
+		}
+		if m.pendingAction != pendingNone {
+			return m.resolveSaveConfirm(msg)
 		}
 		if m.cmdActive {
 			return m.updateCommandLine(msg)
@@ -205,7 +254,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNormal(msg)
 
 	case responseMsg:
+		if msg.seq != m.sendSeq {
+			return m, nil // a cancelled or superseded request's late result — ignore
+		}
 		m.sending = false
+		m.cancel = nil
 		m.resp = msg.resp
 		m.hasResp = true
 		m.respTab = 0
@@ -233,11 +286,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // routeEditing forwards keys to the active text field.
 func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.url.Focused() {
-		if msg.Type == tea.KeyEsc {
+		// The URL bar types like a normal text field. A few structural keys are
+		// intercepted so you can send and move panes without an esc dance.
+		switch msg.Type {
+		case tea.KeyEsc:
+			// Drop to the URL NORMAL sub-mode (method h/l, timeout t, j/L nav).
 			m.url.Blur()
 			m.req.URL = m.url.Value()
 			return m, nil
+		case tea.KeyEnter:
+			return m.send()
+		case tea.KeyTab:
+			return m.cycleFocus(1), nil
+		case tea.KeyShiftTab:
+			return m.cycleFocus(-1), nil
+		case tea.KeyCtrlW:
+			// Begin the Vim window-nav chord; blur so the next key is read as nav.
+			m.url.Blur()
+			m.pendingWindow = true
+			return m, nil
 		}
+		// left/right move the cursor; up/down are ignored by the single-line input.
 		var cmd tea.Cmd
 		m.url, cmd = m.url.Update(msg)
 		m.req.URL = m.url.Value()
@@ -258,6 +327,11 @@ func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // updateNormal handles NORMAL-mode keys: window navigation and per-pane verbs.
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear transient feedback on the next keystroke
+
+	// Arrow keys mirror h/j/k/l so they move *within* the focused pane (and drive
+	// the ctrl+w chord), matching Vim. Pane/focus changes are ctrl+w h/j/k/l or
+	// tab — arrows no longer hop panes.
+	msg = arrowsAsHJKL(msg)
 
 	// Leader-style shortcuts.
 	if m.pendingComma {
@@ -311,28 +385,21 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingComma = true
 		m.statusMsg = "leader: n toggle tree"
 		return m, nil
-	// Arrow keys also move focus directionally — reliable everywhere, and a
-	// fallback for the Vim-style ctrl+h/j/k/l which collide with terminal
-	// control codes (ctrl+h = Backspace, ctrl+j = Enter).
-	case "left":
-		return m.setFocus(m.focusLeft()), nil
-	case "right":
-		return m.setFocus(m.focusRight()), nil
-	case "down":
-		return m.setFocus(m.focusDown()), nil
-	case "up":
-		return m.setFocus(m.focusUp()), nil
 	case "tab":
 		return m.cycleFocus(1), nil
 	case "shift+tab":
 		return m.cycleFocus(-1), nil
 	case "q":
-		return m, tea.Quit
+		return m.guardedQuit()
 	}
 
 	switch m.focus {
 	case focusURL:
 		return m.updateURLNormal(msg)
+	case focusMethod:
+		return m.updateMethodNormal(msg)
+	case focusTimeout:
+		return m.updateTimeoutNormal(msg)
 	case focusCollection:
 		return m.updateCollectionNormal(msg)
 	case focusRequest:
@@ -344,8 +411,41 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateURLNormal handles NORMAL keys while the URL bar is focused. Vim h/l
-// cycle the HTTP method; j moves down into the request pane.
+// updateTimeoutNormal handles NORMAL keys while the timeout field is focused
+// (but not yet editing). i/a/enter begin editing; pane moves are tab / ctrl+w.
+func (m Model) updateTimeoutNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "i", "a", "enter":
+		return m.beginEditTimeout(), textinput.Blink
+	}
+	return m, nil
+}
+
+// beginEditTimeout focuses the timeout field and its inline input for editing.
+func (m Model) beginEditTimeout() Model {
+	m = m.setFocus(focusTimeout)
+	m.timeoutInput.Focus()
+	m.timeoutInput.CursorEnd()
+	return m
+}
+
+// updateMethodNormal handles keys while the standalone method selector is
+// focused: j/k (or ↓/↑) cycle the HTTP method. Pane moves are tab / ctrl+w.
+func (m Model) updateMethodNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", " ":
+		return m.cycleMethod(1), nil
+	case "k":
+		return m.cycleMethod(-1), nil
+	case "enter":
+		return m.send()
+	}
+	return m, nil
+}
+
+// updateURLNormal handles NORMAL keys while the URL bar is focused (blurred via
+// esc): i/a resume typing, t edits the timeout, ⏎ sends. Pane moves are tab /
+// ctrl+w.
 func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -355,17 +455,7 @@ func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.url.CursorEnd()
 		return m, textinput.Blink
 	case "t":
-		m.timeoutInput.Focus()
-		m.timeoutInput.CursorEnd()
-		return m, textinput.Blink
-	case "h":
-		return m.cycleMethod(-1), nil
-	case "l", "m":
-		return m.cycleMethod(1), nil
-	case "j":
-		return m.setFocus(focusRequest), nil
-	case "L":
-		return m.setFocus(focusResponse), nil
+		return m.beginEditTimeout(), textinput.Blink
 	}
 	return m, nil
 }
@@ -379,7 +469,7 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.collectionPane.updateNormal(msg) {
 	case "open":
 		if it, ok := m.collectionPane.selected(); ok {
-			return m.loadSavedRequest(it.Name), nil
+			return m.guardedOpen(it.Name)
 		}
 	case "delete":
 		if row, ok := m.collectionPane.current(); ok && row.name != "" {
@@ -485,7 +575,7 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.openCommandLineWith(':', "mkgroup "+prefix)
 	case "o":
 		if have && !onDir {
-			return m.loadSavedRequest(name), nil
+			return m.guardedOpen(name)
 		}
 	case "d":
 		if have && name != "" {
@@ -585,15 +675,48 @@ func (m Model) setFocus(f focus) Model {
 	m.focus = f
 	m.collectionPane.focused = f == focusCollection
 	m.reqPane.setFocused(f == focusRequest)
+	// The URL bar is a plain text field: focusing it begins typing immediately,
+	// leaving it blurs the input. (esc drops to a NORMAL sub-mode for the
+	// method/timeout shortcuts without moving focus.)
+	if f == focusURL {
+		m.url.Focus()
+		m.url.CursorEnd()
+	} else {
+		m.url.Blur()
+	}
 	return m
+}
+
+// arrowsAsHJKL rewrites an arrow key into its Vim h/j/k/l equivalent so the two
+// are interchangeable in NORMAL mode. Non-arrow keys pass through unchanged.
+func arrowsAsHJKL(msg tea.KeyMsg) tea.KeyMsg {
+	switch msg.Type {
+	case tea.KeyLeft:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	case tea.KeyDown:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	case tea.KeyUp:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
+	case tea.KeyRight:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	}
+	return msg
 }
 
 // cycleFocus moves focus forward (dir=+1) or backward (dir=-1), skipping the
 // Collections pane while it is hidden so backward cycling can't get stuck.
 func (m Model) cycleFocus(dir int) Model {
-	f := m.focus
-	for i := 0; i < 4; i++ {
-		f = focus((int(f) + dir + 4) % 4)
+	n := len(tabOrder)
+	idx := 0
+	for i, f := range tabOrder {
+		if f == m.focus {
+			idx = i
+			break
+		}
+	}
+	for i := 0; i < n; i++ {
+		idx = (idx + dir + n) % n
+		f := tabOrder[idx]
 		if f == focusCollection && !m.collectionShown {
 			continue
 		}
@@ -602,14 +725,18 @@ func (m Model) cycleFocus(dir int) Model {
 	return m
 }
 
-// focus movement helpers — the layout is URL on top, Request left, Response right.
+// focus movement helpers — the top row is the Method selector then the URL bar;
+// below it the Request pane on the left and, on the right, a thin Timeout bar
+// stacked directly above the Response pane.
 func (m Model) focusLeft() focus {
 	switch m.focus {
 	case focusURL:
+		return focusMethod
+	case focusMethod:
 		if m.collectionShown {
 			return focusCollection
 		}
-	case focusResponse:
+	case focusResponse, focusTimeout:
 		return focusRequest
 	case focusRequest:
 		if m.collectionShown {
@@ -620,6 +747,8 @@ func (m Model) focusLeft() focus {
 }
 func (m Model) focusRight() focus {
 	switch m.focus {
+	case focusMethod:
+		return focusURL
 	case focusCollection:
 		return focusRequest
 	case focusRequest, focusURL:
@@ -628,17 +757,26 @@ func (m Model) focusRight() focus {
 	return m.focus
 }
 func (m Model) focusUp() focus {
-	if m.focus == focusCollection || m.focus == focusRequest || m.focus == focusResponse {
+	switch m.focus {
+	case focusResponse:
+		// The Timeout/options bar sits directly above the Response pane.
+		return focusTimeout
+	case focusTimeout, focusCollection, focusRequest:
 		return focusURL
 	}
 	return m.focus
 }
+
+// (focusMethod sits on the top row; it has no pane above it.)
 func (m Model) focusDown() focus {
-	if m.focus == focusURL {
+	switch m.focus {
+	case focusURL, focusMethod:
 		if m.collectionShown {
 			return focusCollection
 		}
 		return focusRequest
+	case focusTimeout:
+		return focusResponse
 	}
 	return m.focus
 }
@@ -652,28 +790,193 @@ func (m Model) currentResponseText() string {
 	return m.respText
 }
 
-// buildRequest merges the URL bar and request pane into one Request, then
-// expands {{variables}} and folds query params into the URL.
-func (m Model) buildRequest() model.Request {
+// rawRequest assembles the current edits into a Request WITHOUT expanding
+// {{variables}} or folding query params into the URL. This is the canonical
+// editable form used both for saving to disk and for unsaved-changes detection.
+func (m Model) rawRequest() model.Request {
 	req := m.req
 	req.URL = m.url.Value()
 	req.Headers = m.reqPane.headersOut()
 	req.Query = m.reqPane.queryOut()
 	req.Body = m.reqPane.bodyOut()
 	req.Timeout = m.timeout
+	return req
+}
 
-	req = m.vars.Apply(req)
+// buildRequest merges the URL bar and request pane into one Request, then
+// expands {{variables}} and folds query params into the URL.
+func (m Model) buildRequest() model.Request {
+	req := m.vars.Apply(m.rawRequest())
 	req.URL = appendQuery(req.URL, req.Query)
 	return req
 }
 
-// send fires the current request (merging headers/body/query) if idle.
+// dirty reports whether the current edits diverge from the last saved or loaded
+// state — i.e. there are unsaved changes worth guarding before a discard.
+func (m Model) dirty() bool {
+	return !requestsEqual(m.rawRequest(), m.baseline)
+}
+
+// requestsEqual compares two requests field by field. A nil and an empty slice
+// are treated as equal so a freshly-loaded request never reads as dirty.
+func requestsEqual(a, b model.Request) bool {
+	if a.Method != b.Method || a.URL != b.URL || a.Body != b.Body || a.Timeout != b.Timeout {
+		return false
+	}
+	if len(a.Headers) != len(b.Headers) || len(a.Query) != len(b.Query) {
+		return false
+	}
+	for i := range a.Headers {
+		if a.Headers[i] != b.Headers[i] {
+			return false
+		}
+	}
+	for i := range a.Query {
+		if a.Query[i] != b.Query[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// The guarded* helpers perform a transition that would discard the current
+// request, but first pop an unsaved-changes prompt when there are edits.
+
+func (m Model) guardedOpen(name string) (tea.Model, tea.Cmd) {
+	if m.dirty() {
+		return m.armSavePrompt(pendingOpenRequest, name), nil
+	}
+	return m.loadSavedRequest(name), nil
+}
+
+func (m Model) guardedNewBlank() (tea.Model, tea.Cmd) {
+	if m.dirty() {
+		return m.armSavePrompt(pendingNewBlank, ""), nil
+	}
+	return m.newBlankRequest(), nil
+}
+
+func (m Model) guardedNewSaved(name string) (tea.Model, tea.Cmd) {
+	if m.dirty() {
+		return m.armSavePrompt(pendingNewNamed, name), nil
+	}
+	return m.newSavedRequest(name), nil
+}
+
+func (m Model) guardedQuit() (tea.Model, tea.Cmd) {
+	if m.dirty() {
+		return m.armSavePrompt(pendingQuit, ""), nil
+	}
+	return m, tea.Quit
+}
+
+// armSavePrompt records the deferred transition and shows the y/n/esc prompt.
+func (m Model) armSavePrompt(action pendingKind, arg string) Model {
+	m.pendingAction = action
+	m.pendingArg = arg
+	verb := "continuing"
+	switch action {
+	case pendingOpenRequest:
+		verb = "opening another request"
+	case pendingNewBlank, pendingNewNamed:
+		verb = "starting a new request"
+	case pendingQuit:
+		verb = "quitting"
+	}
+	if m.currentName != "" {
+		m.statusMsg = "unsaved changes in " + m.currentName +
+			" — save before " + verb + "? (y)es (n)o (esc)"
+	} else {
+		m.statusMsg = "unsaved changes — (n) discard and continue, (esc) cancel · :w <name> to save"
+	}
+	return m
+}
+
+func (m *Model) clearSavePrompt() {
+	m.pendingAction = pendingNone
+	m.pendingArg = ""
+}
+
+// resolveSaveConfirm handles the key pressed while the save prompt is armed.
+func (m Model) resolveSaveConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		if m.currentName == "" {
+			// Nothing to save to yet; keep the prompt so n/esc still work.
+			m.statusMsg = "no name yet — use :w <name> to save, or (n) to discard"
+			return m, nil
+		}
+		m, ok := m.saveCurrentRequest(m.currentName)
+		if !ok {
+			// Save failed — keep the prompt armed so the pending transition
+			// doesn't discard the user's edits; the failure is in statusMsg.
+			return m, nil
+		}
+		return m.performPending()
+	case "n":
+		return m.performPending()
+	default:
+		m.clearSavePrompt()
+		m.statusMsg = "cancelled"
+		return m, nil
+	}
+}
+
+// performPending runs the transition that was deferred behind the save prompt.
+func (m Model) performPending() (tea.Model, tea.Cmd) {
+	action, arg := m.pendingAction, m.pendingArg
+	m.clearSavePrompt()
+	switch action {
+	case pendingOpenRequest:
+		return m.loadSavedRequest(arg), nil
+	case pendingNewBlank:
+		return m.newBlankRequest(), nil
+	case pendingNewNamed:
+		return m.newSavedRequest(arg), nil
+	case pendingQuit:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// send fires the current request (merging headers/body/query) if idle. The
+// request runs under a cancellable context whose cancel func is stashed on the
+// model so esc can abort it mid-flight.
 func (m Model) send() (tea.Model, tea.Cmd) {
 	if m.sending || m.url.Value() == "" {
 		return m, nil
 	}
+	built := m.buildRequest()
+	if missing := vars.Unresolved(built); len(missing) > 0 {
+		wrapped := make([]string, len(missing))
+		for i, n := range missing {
+			wrapped[i] = "{{" + n + "}}"
+		}
+		m.statusMsg = "sending with unresolved vars: " + strings.Join(wrapped, ", ")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.sendSeq++
 	m.sending = true
-	return m, tea.Batch(m.spin.Tick, sendCmd(m.buildRequest()))
+	return m, tea.Batch(m.spin.Tick, sendCmd(ctx, m.sendSeq, built))
+}
+
+// cancelSend aborts an in-flight request. The pending sendCmd still delivers a
+// responseMsg (carrying the context-cancelled error), but bumping sendSeq marks
+// that result stale so it is dropped, and clearing sending stops the spinner and
+// frees the UI for a fresh send immediately.
+func (m Model) cancelSend() (tea.Model, tea.Cmd) {
+	if !m.sending {
+		return m, nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.sendSeq++
+	m.sending = false
+	m.statusMsg = "request cancelled"
+	return m, nil
 }
 
 // appendQuery merges enabled query rows into base's query string.

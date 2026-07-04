@@ -24,15 +24,18 @@ go run .          # or: go build -o volley . && ./volley
 | Key            | Action                                          |
 |----------------|-------------------------------------------------|
 | `ctrl+w` `h/j/k/l` | move focus between panes (Vim window nav)   |
-| arrow keys     | move focus directionally                        |
-| `tab` / `shift+tab` | cycle focus                                |
+| arrow keys     | mirror `h/j/k/l` — move **within** the focused pane |
+| `tab` / `shift+tab` | cycle focus between panes                  |
 | `⏎`            | send request                                    |
-| `i` / `a`      | edit focused field / cell                       |
+| **Method pane** | `j`/`k` or `↑`/`↓` cycle the HTTP method (`tab`/`ctrl+w` to reach it) |
+| **URL bar**    | **types directly — just start typing, no `i` needed** |
+| `⏎`            | send · `tab`/`ctrl+w` move to another pane        |
+| `esc` (URL)    | drop to NORMAL sub-mode for the shortcuts below   |
+| `t`            | focus / edit the timeout field (URL NORMAL)       |
+| `i` / `a`      | edit focused field / cell (headers, query, body)  |
 | `esc`          | leave INSERT, back to NORMAL                     |
-| `h`/`l`         | previous / next HTTP method (URL focused)        |
-| `m`            | next HTTP method (URL focused)                    |
 | `,n`           | show / hide collections tree                    |
-| `q`            | quit                                            |
+| `q`            | quit (prompts if there are unsaved changes)     |
 | **Collections pane (NerdTree)** |                                 |
 | `j/k` · `gg`/`G` · `P` | move selection · first/last · jump to top |
 | `enter`/`l`/`o` | open request or toggle group                     |
@@ -77,7 +80,15 @@ go run .          # or: go build -o volley . && ./volley
 | `:method POST`     | set the HTTP method                               |
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
 | `:timeout 10s`     | set the request timeout (or press `t` in URL pane)|
-| `:help` · `:q`     | help overlay · quit                               |
+| `:help`            | help overlay                                      |
+| `:q` · `:q!`       | quit · quit discarding unsaved changes            |
+| `:wq` / `:x`       | save the current request, then quit               |
+
+When a request has unsaved edits, switching to another request or quitting
+prompts to **save** (`y`), **discard** (`n`), or **cancel** (`esc`) so your
+changes are never silently lost. The method and timeout fields are focus
+targets too — reach them with `tab`/`shift+tab` or the `ctrl+w` window motions
+(arrow keys only move *within* the focused pane, never between panes).
 
 Saved requests are stored as JSON under `~/.config/volley/collections/`.
 Groups are folders: slash-separated names like `APISet1/auth/login` nest a

@@ -87,11 +87,11 @@ func (s Store) Save(name string, req model.Request) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(req, "", "  ")
+	b, err := json.MarshalIndent(toStored(req), "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return writeFileAtomic(path, append(b, '\n'), 0o644)
 }
 
 // Load reads a request by name.
@@ -104,14 +104,11 @@ func (s Store) Load(name string) (model.Request, error) {
 	if err != nil {
 		return model.Request{}, err
 	}
-	var req model.Request
-	if err := json.Unmarshal(b, &req); err != nil {
+	var sr storedRequest
+	if err := json.Unmarshal(b, &sr); err != nil {
 		return model.Request{}, err
 	}
-	if req.Method == "" {
-		req.Method = "GET"
-	}
-	return req, nil
+	return sr.toModel(), nil
 }
 
 // Copy duplicates a saved request. It refuses to overwrite an existing name.

@@ -1,14 +1,29 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/model"
 )
+
+// failingStore returns a Store whose Root sits under a regular file, so every
+// MkdirAll/write fails with ENOTDIR — used to exercise save-failure paths.
+func failingStore(t *testing.T) collections.Store {
+	t.Helper()
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return collections.Store{Root: filepath.Join(blocker, "collections")}
+}
 
 // step applies a message and returns the concrete Model for chaining.
 func step(m Model, msg tea.Msg) Model {
@@ -19,15 +34,23 @@ func step(m Model, msg tea.Msg) Model {
 // runes builds a rune key message ("o", "X-Test", …).
 func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
 
+// urlNormal drops the URL bar out of its always-on typing mode into the NORMAL
+// sub-mode (method/timeout/nav shortcuts), the way pressing esc does.
+func urlNormal(m Model) Model { return step(m, keyEsc) }
+
 var (
 	keyEsc   = tea.KeyMsg{Type: tea.KeyEsc}
 	keyEnter = tea.KeyMsg{Type: tea.KeyEnter}
 )
 
 var (
-	keyCtrlW = tea.KeyMsg{Type: tea.KeyCtrlW}
-	keyDown  = tea.KeyMsg{Type: tea.KeyDown}
-	keyTab   = tea.KeyMsg{Type: tea.KeyTab}
+	keyCtrlW    = tea.KeyMsg{Type: tea.KeyCtrlW}
+	keyDown     = tea.KeyMsg{Type: tea.KeyDown}
+	keyUp       = tea.KeyMsg{Type: tea.KeyUp}
+	keyTab      = tea.KeyMsg{Type: tea.KeyTab}
+	keyShiftTab = tea.KeyMsg{Type: tea.KeyShiftTab}
+	keyLeft     = tea.KeyMsg{Type: tea.KeyLeft}
+	keyRight    = tea.KeyMsg{Type: tea.KeyRight}
 )
 
 func TestFocusNavigation(t *testing.T) {
@@ -51,25 +74,127 @@ func TestFocusNavigation(t *testing.T) {
 		t.Errorf("second ctrl+w l: focus = %v, want Response", m.focus)
 	}
 
-	// ctrl+w h and left arrow from the method/URL bar go directly to the tree.
-	if got := step(step(base, keyCtrlW), runes("h")).focus; got != focusCollection {
-		t.Errorf("ctrl+w h from URL: focus = %v, want Collections", got)
+	// ctrl+w h from the URL bar steps left onto the method selector; again to the tree.
+	if got := step(step(base, keyCtrlW), runes("h")).focus; got != focusMethod {
+		t.Errorf("ctrl+w h from URL: focus = %v, want Method", got)
 	}
-	if got := step(base, tea.KeyMsg{Type: tea.KeyLeft}).focus; got != focusCollection {
-		t.Errorf("left arrow from URL: focus = %v, want Collections", got)
+	if got := step(step(step(step(base, keyCtrlW), runes("h")), keyCtrlW), runes("h")).focus; got != focusCollection {
+		t.Errorf("ctrl+w h h from URL: focus = %v, want Collections", got)
+	}
+	// The URL bar types directly, so a left arrow moves the cursor rather than
+	// navigating — focus stays on the URL.
+	if got := step(base, tea.KeyMsg{Type: tea.KeyLeft}).focus; got != focusURL {
+		t.Errorf("left arrow from URL: focus = %v, want URL (cursor move)", got)
 	}
 
-	// Arrow down from URL also reaches the collections tree.
-	if got := step(base, keyDown).focus; got != focusCollection {
-		t.Errorf("down arrow: focus = %v, want Collections", got)
+	// Arrow keys no longer hop panes: in the URL text field down/up are inert,
+	// so focus stays put. Pane moves are ctrl+w h/j/k/l or tab.
+	if got := step(base, keyDown).focus; got != focusURL {
+		t.Errorf("down arrow from URL should not change focus, got %v", got)
 	}
-	// Tab cycles URL -> Collections.
-	if got := step(base, keyTab).focus; got != focusCollection {
-		t.Errorf("tab: focus = %v, want Collections", got)
+	// Tab follows reading order: Collections, Method, URL, Request, Timeout,
+	// Response. From URL, tab advances to Request; shift+tab steps back to Method.
+	if got := step(base, keyTab).focus; got != focusRequest {
+		t.Errorf("tab from URL: focus = %v, want Request", got)
 	}
-	// Plain j from the URL bar drops into the request pane for quick editing.
-	if got := step(base, runes("j")).focus; got != focusRequest {
-		t.Errorf("j from URL: focus = %v, want Request", got)
+	if got := step(step(base, keyTab), keyTab).focus; got != focusTimeout {
+		t.Errorf("tab tab from URL: focus = %v, want Timeout", got)
+	}
+	if got := step(base, keyShiftTab).focus; got != focusMethod {
+		t.Errorf("shift+tab from URL: focus = %v, want Method", got)
+	}
+	// Bare keys no longer hop panes: j in the URL NORMAL sub-mode leaves focus put.
+	if got := step(urlNormal(base), runes("j")).focus; got != focusURL {
+		t.Errorf("j from URL normal should not change focus, got %v", got)
+	}
+}
+
+func TestArrowsNeverChangeFocus(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// From every pane, a bare arrow key does in-pane motion only — focus stays put.
+	for _, f := range []focus{
+		focusURL, focusMethod, focusTimeout, focusCollection, focusRequest, focusResponse,
+	} {
+		m := base.setFocus(f)
+		for _, k := range []tea.KeyMsg{keyUp, keyDown, keyLeft, keyRight} {
+			if got := step(m, k).focus; got != f {
+				t.Errorf("bare arrow from %v changed focus to %v", f, got)
+			}
+		}
+	}
+
+	// Focus changes require tab or the ctrl+w chord — ctrl+w + arrow works.
+	if got := step(step(base, keyCtrlW), keyDown).focus; got != focusCollection {
+		t.Errorf("ctrl+w ↓ from URL: focus = %v, want Collections", got)
+	}
+	if got := step(step(base.setFocus(focusResponse), keyCtrlW), keyUp).focus; got != focusTimeout {
+		t.Errorf("ctrl+w ↑ from Response: focus = %v, want Timeout", got)
+	}
+}
+
+func TestURLBarTypesDirectly(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// On launch the URL bar is ready for input — no 'i' needed.
+	if !base.url.Focused() {
+		t.Fatal("URL bar should accept typing immediately on launch")
+	}
+	m := step(base, runes("https://api.test/x"))
+	if got := m.url.Value(); got != "https://api.test/x" {
+		t.Fatalf("typed URL = %q, want the literal text", got)
+	}
+	// Characters that are ex-command/normal keys elsewhere are just text here.
+	m = step(m, runes("?a=:b["))
+	if got := m.url.Value(); got != "https://api.test/x?a=:b[" {
+		t.Errorf("special chars should type into the URL, got %q", got)
+	}
+
+	// Enter sends rather than inserting a newline.
+	sent, cmd := m.Update(keyEnter)
+	if !sent.(Model).sending || cmd == nil {
+		t.Error("enter in the URL bar should send the request")
+	}
+
+	// esc drops to the NORMAL sub-mode (blurred), where shortcut keys work.
+	n := urlNormal(m)
+	if n.url.Focused() {
+		t.Error("esc should leave the URL input (drop to NORMAL)")
+	}
+	if n.focus != focusURL {
+		t.Errorf("esc should keep focus on the URL bar, got %v", n.focus)
+	}
+}
+
+func TestTimeoutFieldReachableAndEditable(t *testing.T) {
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// The Timeout/options bar sits directly above the Response pane, so the
+	// ctrl+w k window motion from Response lands on it.
+	m := step(step(base.setFocus(focusResponse), keyCtrlW), runes("k"))
+	if m.focus != focusTimeout {
+		t.Fatalf("ctrl+w k from Response: focus = %v, want Timeout", m.focus)
+	}
+
+	// i begins editing; typing a duration and committing sets the timeout.
+	m = step(m, runes("i"))
+	if !m.editing() || !m.timeoutInput.Focused() {
+		t.Fatal("i on the timeout field should begin editing it")
+	}
+	m = step(m, runes("2s"))
+	m = step(m, keyEnter)
+	if m.timeout != 2*time.Second {
+		t.Errorf("timeout = %v, want 2s", m.timeout)
+	}
+	// After committing, focus remains on the timeout field in normal mode.
+	if m.focus != focusTimeout || m.editing() {
+		t.Errorf("after commit: focus = %v editing = %v, want Timeout/normal", m.focus, m.editing())
+	}
+
+	// The 't' shortcut from the URL NORMAL sub-mode jumps straight to editing.
+	m = step(urlNormal(base), runes("t"))
+	if m.focus != focusTimeout || !m.timeoutInput.Focused() {
+		t.Errorf("t from URL normal: focus = %v timeoutFocused = %v, want editing timeout", m.focus, m.timeoutInput.Focused())
 	}
 }
 
@@ -154,15 +279,15 @@ func TestRequestTabsReachableFromURLFocus(t *testing.T) {
 		t.Fatalf("initial focus = %v, want URL", m.focus)
 	}
 
-	m = step(m, runes("]"))
+	m = step(urlNormal(m), runes("]"))
 	if m.focus != focusRequest || m.reqPane.tab != tabBody {
-		t.Fatalf("] from URL focus = focus %v tab %d, want Request/Body", m.focus, m.reqPane.tab)
+		t.Fatalf("] from URL normal focus = focus %v tab %d, want Request/Body", m.focus, m.reqPane.tab)
 	}
 
 	m = step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = step(m, runes("["))
+	m = step(urlNormal(m), runes("["))
 	if m.focus != focusRequest || m.reqPane.tab != tabQuery {
-		t.Fatalf("[ from URL focus = focus %v tab %d, want Request/Query", m.focus, m.reqPane.tab)
+		t.Fatalf("[ from URL normal focus = focus %v tab %d, want Request/Query", m.focus, m.reqPane.tab)
 	}
 }
 
@@ -246,6 +371,119 @@ func TestEnterSendsAndGoesInFlight(t *testing.T) {
 	}
 }
 
+func TestSendWarnsOnUnresolvedVars(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetValue("https://{{host}}/ping")
+	m = step(m, keyEnter)
+	if !m.sending {
+		t.Fatal("Enter should still send even with unresolved vars")
+	}
+	if !strings.Contains(m.statusMsg, "{{host}}") {
+		t.Errorf("statusMsg = %q, want it to warn about {{host}}", m.statusMsg)
+	}
+
+	// A fully-resolved send leaves no unresolved-var warning.
+	m2 := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m2.url.SetValue("https://example.test/ping")
+	m2 = step(m2, keyEnter)
+	if strings.Contains(m2.statusMsg, "unresolved") {
+		t.Errorf("statusMsg = %q, want no unresolved-var warning", m2.statusMsg)
+	}
+}
+
+func TestSendWarnsOnUnresolvedQueryVar(t *testing.T) {
+	// A var only in a query param must still be flagged, even though
+	// buildRequest folds and percent-encodes the query into the URL.
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = m.applyRequest(model.Request{
+		Method: "GET",
+		URL:    "https://example.test/x",
+		Query:  []model.KV{{Key: "q", Value: "{{tok}}", Enabled: true}},
+	})
+	m = step(m, keyEnter)
+	if !strings.Contains(m.statusMsg, "{{tok}}") {
+		t.Errorf("statusMsg = %q, want warning about {{tok}} in the query", m.statusMsg)
+	}
+}
+
+func TestWriteQuitBlockedWhenSaveFails(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.collectionStore = failingStore(t)
+	m.currentName = "api/thing"
+	m.url.SetValue("https://example.test")
+
+	_, cmd := m.executeCommand("wq")
+	if isQuit(cmd) {
+		t.Error(":wq must not quit when the save fails — that would lose edits")
+	}
+}
+
+func TestSavePromptKeepsWorkWhenSaveFails(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.collectionStore = failingStore(t)
+	m.currentName = "api/thing"
+	m.url.SetValue("https://changed.test") // make it dirty so quitting arms the prompt
+
+	tm, _ := m.guardedQuit()
+	m = tm.(Model)
+	if m.pendingAction != pendingQuit {
+		t.Fatalf("guardedQuit should arm the save prompt, pendingAction=%v", m.pendingAction)
+	}
+
+	// Answering 'y' triggers a save that fails: we must neither quit nor drop
+	// the pending action (which would discard the edits).
+	tm, cmd := m.resolveSaveConfirm(runes("y"))
+	m = tm.(Model)
+	if isQuit(cmd) {
+		t.Error("failed save on 'y' must not quit")
+	}
+	if m.pendingAction != pendingQuit {
+		t.Error("failed save must keep the prompt armed, not perform the pending transition")
+	}
+}
+
+func TestNewSavedRequestDoesNotClaimNameOnFailure(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.collectionStore = failingStore(t)
+	m = m.newSavedRequest("api/new")
+	if m.currentName == "api/new" {
+		t.Error("currentName must not be set when the create/save failed")
+	}
+	if !strings.Contains(m.statusMsg, "failed") {
+		t.Errorf("statusMsg = %q, want a failure message", m.statusMsg)
+	}
+}
+
+func TestEscCancelsInFlight(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetValue("https://example.test")
+	m = step(m, keyEnter)
+	if !m.sending {
+		t.Fatal("Enter should put the model in-flight")
+	}
+	inFlightSeq := m.sendSeq
+
+	// esc while sending aborts the request instead of its usual mode-exit.
+	m = step(m, keyEsc)
+	if m.sending {
+		t.Error("esc should stop the in-flight request")
+	}
+	if m.cancel != nil {
+		t.Error("cancel func should be cleared after abort")
+	}
+	if m.statusMsg != "request cancelled" {
+		t.Errorf("statusMsg = %q, want \"request cancelled\"", m.statusMsg)
+	}
+
+	// The aborted request's late response must be dropped, not rendered.
+	m = step(m, responseMsg{seq: inFlightSeq, resp: model.Response{
+		Status: "200 OK", StatusCode: 200, Body: []byte("late"),
+	}})
+	if m.hasResp {
+		t.Error("a cancelled request's late response should be ignored")
+	}
+}
+
 func TestLayoutFitsWindow(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	out := m.View()
@@ -279,8 +517,13 @@ func TestToggleCollectionTree(t *testing.T) {
 func TestRenderLifecycle(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	if out := m.View(); !strings.Contains(out, "NORMAL") {
-		t.Error("status bar should show NORMAL mode")
+	// The URL bar accepts typing on launch, so the mode tag starts at INSERT;
+	// esc drops it to NORMAL.
+	if out := m.View(); !strings.Contains(out, "INSERT") {
+		t.Error("status bar should show INSERT mode while the URL bar is active")
+	}
+	if out := urlNormal(m).View(); !strings.Contains(out, "NORMAL") {
+		t.Error("status bar should show NORMAL mode after esc")
 	}
 
 	// A completed JSON response should render its status and pretty body.
@@ -305,17 +548,28 @@ func TestMethodCycle(t *testing.T) {
 	if m.req.Method != "GET" {
 		t.Fatalf("default method = %q", m.req.Method)
 	}
-	m = step(m, runes("l"))
-	if m.req.Method != "POST" {
-		t.Errorf("after l, method = %q, want POST", m.req.Method)
+	// The method is its own pane: reach it (shift+tab from URL, since Method
+	// precedes URL in reading order) and cycle with the down/up arrow keys.
+	m = step(m, keyShiftTab)
+	if m.focus != focusMethod {
+		t.Fatalf("shift+tab from URL: focus = %v, want Method", m.focus)
 	}
-	m = step(m, runes("h"))
+	m = step(m, keyDown) // ↓ == j == next
+	if m.req.Method != "POST" {
+		t.Errorf("after ↓, method = %q, want POST", m.req.Method)
+	}
+	m = step(m, keyUp) // ↑ == k == previous
 	if m.req.Method != "GET" {
-		t.Errorf("after h, method = %q, want GET", m.req.Method)
+		t.Errorf("after ↑, method = %q, want GET", m.req.Method)
 	}
-	m = step(m, runes("m"))
+	// j/k also work directly.
+	m = step(m, runes("j"))
 	if m.req.Method != "POST" {
-		t.Errorf("after m, method = %q, want POST", m.req.Method)
+		t.Errorf("after j, method = %q, want POST", m.req.Method)
+	}
+	m = step(m, runes("k"))
+	if m.req.Method != "GET" {
+		t.Errorf("after k, method = %q, want GET", m.req.Method)
 	}
 }
 

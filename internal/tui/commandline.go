@@ -89,26 +89,39 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	}
 	switch fields[0] {
 	case "q", "quit":
+		return m.guardedQuit()
+	case "q!", "quit!":
+		return m, tea.Quit // force-quit, discarding unsaved edits
+	case "wq", "x":
+		if m.currentName == "" {
+			m.statusMsg = "no name yet — use :w <name> first"
+			return m, nil
+		}
+		m, ok := m.saveCurrentRequest(m.currentName)
+		if !ok {
+			return m, nil // save failed — stay open so edits aren't lost
+		}
 		return m, tea.Quit
 	case "send":
 		return m.send()
 	case "new", "enew":
 		if len(fields) > 1 {
-			return m.newSavedRequest(fields[1]), nil
+			return m.guardedNewSaved(fields[1])
 		}
-		return m.newBlankRequest(), nil
+		return m.guardedNewBlank()
 	case "w", "write", "save":
 		name := ""
 		if len(fields) > 1 {
 			name = fields[1]
 		}
-		return m.saveCurrentRequest(name), nil
+		m, _ := m.saveCurrentRequest(name)
+		return m, nil
 	case "e", "edit", "open":
 		if len(fields) < 2 {
 			m.statusMsg = "usage: :open name"
 			return m, nil
 		}
-		return m.loadSavedRequest(fields[1]), nil
+		return m.guardedOpen(fields[1])
 	case "delete", "del", "rm":
 		if len(fields) < 2 {
 			m.statusMsg = "usage: :delete name"
@@ -212,38 +225,38 @@ func (m Model) newBlankRequest() Model {
 
 func (m Model) newSavedRequest(name string) Model {
 	m = m.applyRequest(model.NewRequest())
-	m.currentName = name
 	if err := m.collectionStore.Save(name, m.req); err != nil {
+		// Don't claim the name — no file was written.
 		m.statusMsg = "create request failed: " + err.Error()
 		return m
 	}
+	m.currentName = name
 	m.statusMsg = "created " + name + " — edit URL, then :save"
 	m.refreshCollections()
 	return m
 }
 
-func (m Model) saveCurrentRequest(name string) Model {
+// saveCurrentRequest persists the current edits under name. The bool reports
+// whether the save actually succeeded, so callers that would discard, replace,
+// or quit afterwards can abort and keep the user's work when the write fails.
+func (m Model) saveCurrentRequest(name string) (Model, bool) {
 	if name == "" {
 		name = m.currentName
 	}
 	if name == "" {
 		m.statusMsg = "usage: :save name"
-		return m
+		return m, false
 	}
-	req := m.req
-	req.URL = m.url.Value()
-	req.Headers = m.reqPane.headersOut()
-	req.Query = m.reqPane.queryOut()
-	req.Body = m.reqPane.bodyOut()
-	req.Timeout = m.timeout
+	req := m.rawRequest()
 	if err := m.collectionStore.Save(name, req); err != nil {
 		m.statusMsg = "save failed: " + err.Error()
-		return m
+		return m, false
 	}
 	m.currentName = name
+	m.baseline = req // current edits are now the on-disk state
 	m.statusMsg = "saved " + name
 	m.refreshCollections()
-	return m
+	return m, true
 }
 
 // applyRequest loads a Request into the editor panes (URL, method, tabs).
@@ -260,6 +273,8 @@ func (m Model) applyRequest(req model.Request) Model {
 		}
 	}
 	m.reqPane.setRequest(req)
+	// Capture the freshly-loaded state as the clean baseline for dirty checks.
+	m.baseline = m.rawRequest()
 	return m
 }
 

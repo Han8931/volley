@@ -63,10 +63,15 @@ func (m Model) paneStyle(f focus, w, h int) lipgloss.Style {
 		Padding(0, 1)
 }
 
-func (m Model) viewURLBar(l layout) string {
-	method := lipgloss.NewStyle().Foreground(colMethod).Bold(true).
-		Render(fmt.Sprintf(" %-6s", m.req.Method))
+// viewMethodPane renders the standalone HTTP-method selector to the left of the
+// URL bar. It cycles with j/k or ↑/↓ when focused.
+func (m Model) viewMethodPane(l layout) string {
+	label := lipgloss.NewStyle().Foreground(colMethod).Bold(true).
+		Render(fmt.Sprintf("%-7s", m.req.Method))
+	return m.paneStyle(focusMethod, l.methodInnerW, 1).Render(label)
+}
 
+func (m Model) viewURLBar(l layout) string {
 	urlW := urlInputWidth(l)
 	urlView := m.url.View()
 	if !m.url.Focused() && m.url.Value() == "" {
@@ -75,13 +80,12 @@ func (m Model) viewURLBar(l layout) string {
 		urlView = truncateRunes(urlView, urlW)
 	}
 
-	left := lipgloss.JoinHorizontal(lipgloss.Left, method, " │ ", urlView)
 	button := m.sendButtonView()
-	space := urlContentWidth(l) - lipgloss.Width(left) - lipgloss.Width(button)
+	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(button)
 	if space < 1 {
 		space = 1
 	}
-	inner := lipgloss.JoinHorizontal(lipgloss.Left, left, strings.Repeat(" ", space), button)
+	inner := lipgloss.JoinHorizontal(lipgloss.Left, urlView, strings.Repeat(" ", space), button)
 	return m.paneStyle(focusURL, l.urlInnerW, 1).Render(inner)
 }
 
@@ -94,8 +98,8 @@ func urlContentWidth(l layout) int {
 }
 
 func urlInputWidth(l layout) int {
-	// Method label (7), separator (3), a gap before the button, and the button.
-	w := urlContentWidth(l) - 7 - 3 - 1 - len(sendButtonText)
+	// The URL bar now holds only the input and the SEND button (a gap between).
+	w := urlContentWidth(l) - 1 - len(sendButtonText)
 	if w < 1 {
 		return 1
 	}
@@ -116,15 +120,19 @@ func (m Model) viewOptionsBar(l layout) string {
 		timeoutView = lipgloss.NewStyle().Foreground(colDim).Render(m.timeoutInput.Placeholder)
 	}
 	inner := lipgloss.JoinHorizontal(lipgloss.Left,
-		title("OPTIONS"),
-		dim(" timeout "), timeoutView,
+		title("TIMEOUT"), dim(" "), timeoutView,
 	)
-	return m.paneStyle(focusURL, l.respInnerW, 1).Render(inner)
+	return m.paneStyle(focusTimeout, l.respInnerW, 1).Render(inner)
 }
 
 func (m Model) viewMain(l layout) string {
-	right := lipgloss.JoinVertical(lipgloss.Left,
+	topBar := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.viewMethodPane(l),
+		strings.Repeat(" ", l.gap),
 		m.viewURLBar(l),
+	)
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		topBar,
 		m.viewBody(l),
 	)
 	if !m.collectionShown {
@@ -194,6 +202,8 @@ func (m Model) viewStatusBar() string {
 	switch {
 	case m.statusMsg != "":
 		hints = " " + m.statusMsg
+	case insert && m.focus == focusURL:
+		hints = " type the URL · ⏎ send · tab/^w move panes · esc — NORMAL shortcuts"
 	case insert:
 		hints = " esc — vim normal mode in this field"
 	case fieldNormal:
@@ -201,7 +211,11 @@ func (m Model) viewStatusBar() string {
 	case m.pendingWindow:
 		hints = " window: h/j/k/l pick a pane"
 	case m.focus == focusURL:
-		hints = " h/l method · i edit URL · t edit timeout · [/] request tabs · ⏎ send · ? help"
+		hints = " i edit URL · t timeout · ⏎ send · tab / ^w move panes · ? help"
+	case m.focus == focusMethod:
+		hints = " j/k or ↑/↓ change method · ⏎ send · tab / ^w move panes · ? help"
+	case m.focus == focusTimeout:
+		hints = " i edit timeout · tab / ^w move panes · ? help"
 	case m.focus == focusCollection:
 		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
