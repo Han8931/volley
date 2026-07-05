@@ -450,19 +450,18 @@ func TestClickSelectsCollectionRow(t *testing.T) {
 	}
 }
 
-func TestDoubleClickOpensTreeItem(t *testing.T) {
+func TestClickOpensTreeRequestAsTab(t *testing.T) {
 	m, _ := seededModel(t)
 	x, y := findInView(m, "seed")
 	if x < 0 {
 		t.Fatal("seed item not found in view")
 	}
-	m = clickModel(t, m, x, y) // first click: select only
-	if m.currentName == "seed" {
-		t.Fatal("a single click must not open the request")
-	}
-	m = clickModel(t, m, x, y) // second click on the same row: open
+	m = clickModel(t, m, x, y)
 	if m.currentName != "seed" {
-		t.Errorf("double-click should open the seed request, currentName=%q", m.currentName)
+		t.Errorf("click should open the seed request, currentName=%q", m.currentName)
+	}
+	if len(m.openTabs) != 1 || m.openTabs[0] != "seed" || m.activeTab != 0 {
+		t.Fatalf("click should open seed as a tab, openTabs=%v active=%d", m.openTabs, m.activeTab)
 	}
 }
 

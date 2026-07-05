@@ -971,16 +971,16 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 const doubleClickWindow = 500 * time.Millisecond
 
 // clickCollections focuses the tree and moves the selection to the clicked row.
-// A single click only selects; a second click on the same row within
-// doubleClickWindow opens it (a request) or toggles it (a folder), reusing the
-// same path as pressing Enter.
+// Clicking a request opens it as a request tab. Folders keep the old behavior: a
+// double-click on the same row toggles them, reusing the same path as Enter.
 func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
 	m = m.setFocus(focusCollection)
 	row := y - (1 + collectionsHeaderRows) // top border + header lines
 	if row < 0 {
 		return m, nil
 	}
-	if rows := m.collectionPane.rows(); row >= len(rows) {
+	rows := m.collectionPane.rows()
+	if row >= len(rows) {
 		return m, nil
 	}
 	double := row == m.lastTreeClickRow && !m.lastTreeClick.IsZero() &&
@@ -988,13 +988,13 @@ func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
 	m.collectionPane.cursor = row
 	m.lastTreeClickRow = row
 	m.lastTreeClick = time.Now()
+	if rows[row].file {
+		m.lastTreeClick = time.Time{} // request clicks open immediately; no double-click state to keep
+		return m.openTabByName(rows[row].name)
+	}
 	if double {
 		m.lastTreeClick = time.Time{} // consume, so a triple-click doesn't re-fire
-		if m.collectionPane.updateNormal(tea.KeyMsg{Type: tea.KeyEnter}) == "open" {
-			if it, ok := m.collectionPane.selected(); ok {
-				return m.guardedOpen(it.Name)
-			}
-		}
+		m.collectionPane.updateNormal(tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	return m, nil
 }
