@@ -17,11 +17,11 @@ or two), **L** (multi-day).
 | Collections / folders           |   ✅    |  ✅   | ✅ |
 | Variables                       |   ✅    |  ✅   | ⚠️ single in-memory scope |
 | Environments (dev/stg/prod)     |   ✅    |  ✅   | ❌ |
-| Auth helpers (Bearer/Basic/…)   |   ✅    |  ✅   | ❌ (manual header) |
+| Auth helpers (Bearer/Basic/…)   |   ✅    |  ✅   | ✅ |
 | Body types (form/multipart/GQL) |   ✅    |  ✅   | ❌ (raw only) |
 | Assertions / tests              |   ✅    |  ✅   | ❌ |
 | Value extraction / chaining     |   ✅    |  ✅   | ❌ |
-| curl import / export            |   ✅    |  ✅   | ❌ |
+| curl import / export            |   ✅    |  ✅   | ✅ |
 | OpenAPI / code-gen import       |   ✅    |  ✅   | ❌ |
 | Request history                 |   ✅    |  ⚠️   | ❌ |
 | Headless CLI runner (CI)        |  (Newman) | ✅ (`bru run`) | ❌ |
@@ -37,6 +37,17 @@ keyboard-speed workflows and load testing.
 ## P0 — Essentials for daily use (close the parity gap)
 
 These are the things whose absence makes a Postman user bounce.
+
+- [ ] **Tab safety + session continuity** — make the new request-tab workflow safe
+      and durable before adding more tab features. **Effort: M.**
+  - [ ] Guard tree-click / `:tabnew` tab opens when the current editor is dirty,
+        or open in the background without replacing the dirty buffer. This fixes
+        the current risk of silently discarding edits when a clicked request is
+        not already open. **S.**
+  - [ ] Track per-tab dirty state and render a dirty marker on the tab label;
+        block or confirm closing/switching away from dirty tabs. **M.**
+  - [ ] Persist/restore open tabs, active tab, tree expansion, tree visibility,
+        and active saved request under the Volley config directory. **S–M.**
 
 - [x] **Auth helpers** — done: a request-level `model.Auth` (Bearer / Basic /
       API-key) materialized at send time by `Request.ApplyAuth` into the right

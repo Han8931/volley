@@ -482,26 +482,35 @@ func (m Model) closeActiveTab() (tea.Model, tea.Cmd) {
 	return m.closeTabAt(m.activeTab)
 }
 
-// closeTabAt removes tab idx. Closing the active tab loads its neighbour and so
-// discards unsaved edits — that case is blocked until you save or discard.
-// Closing any other tab keeps the current editor (and its edits) untouched, just
-// shifting the active index, so mouse-closing a background tab is always safe.
+// closeTabAt removes tab idx. Closing the active tab loads its neighbour and can
+// discard unsaved edits, so that case asks for confirmation first. Closing any
+// other tab keeps the current editor (and its edits) untouched, just shifting the
+// active index, so mouse-closing a background tab is always safe.
 func (m Model) closeTabAt(idx int) (tea.Model, tea.Cmd) {
 	if idx < 0 || idx >= len(m.openTabs) {
 		return m, nil
 	}
-	closingActive := idx == m.activeTab
-	if closingActive && m.dirty() {
-		m.statusMsg = "save or discard current edits before closing the tab"
+	if idx == m.activeTab && m.dirty() {
+		m.confirmCloseTab = true
+		m.closeTabIdx = idx
+		m.statusMsg = "close tab with unsaved changes? (y/n)"
 		return m, nil
 	}
+	return m.closeTabAtDiscarding(idx), nil
+}
+
+func (m Model) closeTabAtDiscarding(idx int) Model {
+	if idx < 0 || idx >= len(m.openTabs) {
+		return m
+	}
+	closingActive := idx == m.activeTab
 	tabs := append([]string(nil), m.openTabs[:idx]...)
 	tabs = append(tabs, m.openTabs[idx+1:]...)
 	m.openTabs = tabs
 	if len(m.openTabs) == 0 {
 		m.activeTab = 0
 		m.statusMsg = "closed tab"
-		return m, nil
+		return m
 	}
 	switch {
 	case idx < m.activeTab:
@@ -513,7 +522,18 @@ func (m Model) closeTabAt(idx int) (tea.Model, tea.Cmd) {
 		m = m.loadSavedRequest(m.openTabs[m.activeTab]) // load the neighbour
 	}
 	m.statusMsg = "closed tab"
-	return m, nil
+	return m
+}
+
+func (m Model) resolveTabCloseConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	idx := m.closeTabIdx
+	m.confirmCloseTab = false
+	m.closeTabIdx = 0
+	if msg.String() != "y" {
+		m.statusMsg = "tab close cancelled"
+		return m, nil
+	}
+	return m.closeTabAtDiscarding(idx), nil
 }
 
 // closeOtherTabs keeps only the active tab (Vim's :tabonly).

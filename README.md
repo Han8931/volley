@@ -24,11 +24,11 @@ go run .          # or: go build -o volley . && ./volley
 
 | Key            | Action                                          |
 |----------------|-------------------------------------------------|
-| `ctrl+w` `h/j/k/l` | move focus between panes (Vim window nav)   |
+| `ctrl+w` `h/j/k/l` | move focus between panes (Vim window nav); `ctrl+w j` from Method/URL jumps to Body |
 | arrow keys     | mirror `h/j/k/l` — move **within** the focused pane |
 | `tab` / `shift+tab` | cycle focus between panes                  |
 | `:send` or SEND button | send request                            |
-| **Method pane** | `j`/`k` or `↑`/`↓` cycle the HTTP method (`tab`/`ctrl+w` to reach it) |
+| **Method pane** | `r` cycles the HTTP method (`tab`/`ctrl+w` to reach it) |
 | **URL bar**    | **types directly — just start typing, no `i` needed** |
 | `tab`/`ctrl+w` | move to another pane                            |
 | `esc` (URL)    | drop to NORMAL sub-mode with Vim edits (`x`, `w`, `b`, `C`, `dd`, `p`, `u`, …) |
@@ -40,11 +40,13 @@ go run .          # or: go build -o volley . && ./volley
 | `q`            | quit (prompts if there are unsaved changes)     |
 | **Collections pane (NerdTree)** |                                 |
 | `j/k` · `gg`/`G` · `P` | move selection · first/last · jump to top |
+| click request    | open the request as a tab                         |
 | `enter`/`l`/`o` | open request or toggle group                     |
 | `O` / `X`       | expand / collapse group **recursively**          |
 | `A`             | widen/narrow the tree to inspect long names      |
 | `space`         | mark/unmark request, then move cursor down       |
 | `T`             | open marked requests as tabs                     |
+| `H` / `L`       | switch open request tabs                         |
 | `h` · `p` · `x` | collapse group · jump to parent · close parent   |
 | `,n` · `R`      | show / hide tree · reload from disk              |
 | `m`             | open NerdTree-style menu (context-aware)         |
@@ -52,7 +54,8 @@ go run .          # or: go build -o volley . && ./volley
 | `m r` · `m c`   | rename request/group · copy request              |
 | `m d` · `dd`    | delete request or group (asks `y/n` to confirm)  |
 | **Request pane** |                                               |
-| `[` / `]` · `H`/`L` | previous / next tab (Headers · Body · Params · Auth) |
+| `[` / `]`       | previous / next sub-tab (Headers · Body · Params · Auth) |
+| `H` / `L`       | switch open request tabs when tabs are open       |
 | **Headers / Params** |                                             |
 | `j/k` · `gg`/`G` | move between rows · first/last row             |
 | `h/l` · `0/$` · `b/w` | key/value cell                            |
@@ -91,6 +94,9 @@ go run .          # or: go build -o volley . && ./volley
 | `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
 | `:send`            | send the current request                          |
 | `:timeout 10s`     | set the request timeout (or press `,t`)           |
+| `:tabnew name` / `:tabe name` | open a saved request as a tab          |
+| `:tabnext` / `:tabprevious` | switch request tabs                       |
+| `:tabclose` / `:tabonly` | close active tab / close all other tabs      |
 | `:help`            | help overlay                                      |
 | `:q` · `:q!`       | quit · quit discarding unsaved changes (`:qa` aliases work too) |
 | `:wq` / `:x`       | save the current request, then quit (`:wqa`/`:xa` aliases work too) |
@@ -128,6 +134,8 @@ sent.
 - [x] **Collections** — save/open/rename/copy/delete, NerdTree-style tree pane (native JSON storage)
 - [x] **Auth helpers** — Bearer, Basic, and API-key auth, injected at send time
 - [x] **curl import/export** — `:import curl …` and `:copy curl`
+- [x] **Request tabs** — open marked/tree-clicked saved requests as tabs, switch with `H`/`L`
+- [ ] **Tab safety + persistence** — guard dirty tree-click opens, show per-tab dirty state, restore tabs on restart
 - [ ] Load testing (concurrency, RPS, p50/p95/p99, live charts)
 
 > Note: collections are stored as native JSON under Volley's user config directory

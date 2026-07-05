@@ -200,13 +200,26 @@ func TestTabCloseLastTabClears(t *testing.T) {
 	}
 }
 
-func TestTabCloseBlockedWhenDirty(t *testing.T) {
+func TestTabCloseAsksWhenDirty(t *testing.T) {
 	m := storedTabModel(t, "alpha", "beta")
 	m.url.SetText("https://edited.test") // make it dirty
 	next, _ := m.closeActiveTab()
 	m = next.(Model)
-	if len(m.openTabs) != 2 {
-		t.Fatalf("dirty editor should block tab close, openTabs=%v", m.openTabs)
+	if !m.confirmCloseTab || len(m.openTabs) != 2 {
+		t.Fatalf("dirty editor should ask before closing, confirm=%v openTabs=%v", m.confirmCloseTab, m.openTabs)
+	}
+	cancelled, _ := m.resolveTabCloseConfirm(runes("n"))
+	m = cancelled.(Model)
+	if m.confirmCloseTab || len(m.openTabs) != 2 {
+		t.Fatalf("n should cancel tab close, confirm=%v openTabs=%v", m.confirmCloseTab, m.openTabs)
+	}
+
+	next, _ = m.closeActiveTab()
+	m = next.(Model)
+	closed, _ := m.resolveTabCloseConfirm(runes("y"))
+	m = closed.(Model)
+	if strings.Join(m.openTabs, ",") != "beta" || m.currentName != "beta" {
+		t.Fatalf("y should close dirty alpha and load beta, openTabs=%v current=%q", m.openTabs, m.currentName)
 	}
 }
 

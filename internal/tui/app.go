@@ -131,10 +131,12 @@ type Model struct {
 
 	showHelp bool
 
-	collectionMenu bool   // NERDTree-like "m" filesystem menu is awaiting a key
-	confirmDelete  string // name of a request/group awaiting y/n delete confirmation
-	confirmGroup   bool   // whether confirmDelete refers to a group
-	statusMsg      string // ephemeral feedback shown in the status bar
+	collectionMenu  bool   // NERDTree-like "m" filesystem menu is awaiting a key
+	confirmDelete   string // name of a request/group awaiting y/n delete confirmation
+	confirmGroup    bool   // whether confirmDelete refers to a group
+	confirmCloseTab bool   // active tab has unsaved edits and awaits y/n close confirmation
+	closeTabIdx     int    // tab index to close if confirmCloseTab is accepted
+	statusMsg       string // ephemeral feedback shown in the status bar
 
 	// baseline is the last saved/loaded request, used to detect unsaved edits.
 	baseline model.Request
@@ -292,6 +294,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.confirmDelete != "" {
 			return m.resolveDeleteConfirm(msg), nil
+		}
+		if m.confirmCloseTab {
+			return m.resolveTabCloseConfirm(msg)
 		}
 		if m.pendingAction != pendingNone {
 			return m.resolveSaveConfirm(msg)
@@ -912,7 +917,7 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	// Don't let clicks reach the panes while a modal/prompt owns the screen.
 	if m.showHelp || m.cmdActive || m.collectionMenu ||
-		m.pendingAction != pendingNone || m.confirmDelete != "" {
+		m.pendingAction != pendingNone || m.confirmDelete != "" || m.confirmCloseTab {
 		return m, nil
 	}
 	if m.sendButtonClicked(msg) {
