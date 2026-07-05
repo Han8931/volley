@@ -406,7 +406,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "h":
 			return m.setFocus(m.focusLeft()), nil
 		case "j":
-			return m.setFocus(m.focusDown()), nil
+			return m.moveFocusDown(), nil
 		case "k":
 			return m.setFocus(m.focusUp()), nil
 		case "l":
@@ -1279,12 +1279,20 @@ func (m Model) focusUp() focus {
 func (m Model) focusDown() focus {
 	switch m.focus {
 	case focusURL, focusMethod:
-		if m.collectionShown {
-			return focusCollection
-		}
 		return focusRequest
 	}
 	return m.focus
+}
+
+// moveFocusDown handles ctrl+w j / ctrl+w ↓. From the top method/URL bar, the
+// pane directly below is the request body editor, not the collections tree.
+func (m Model) moveFocusDown() Model {
+	if m.focus == focusURL || m.focus == focusMethod {
+		m = m.setFocus(focusRequest)
+		m.reqPane.selectTab(tabBody)
+		return m
+	}
+	return m.setFocus(m.focusDown())
 }
 
 // currentResponseText returns the text shown in the response viewport for

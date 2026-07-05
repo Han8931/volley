@@ -68,16 +68,12 @@ func TestFocusNavigation(t *testing.T) {
 		t.Fatalf("initial focus = %v, want URL", base.focus)
 	}
 
-	// ctrl+w j moves down from URL into the collections tree.
+	// ctrl+w j moves down from URL directly into the request Body editor.
 	m := step(step(base, keyCtrlW), runes("j"))
-	if m.focus != focusCollection {
-		t.Errorf("ctrl+w j: focus = %v, want Collections", m.focus)
+	if m.focus != focusRequest || m.reqPane.tab != tabBody {
+		t.Errorf("ctrl+w j: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
 	}
-	// ctrl+w l moves collections -> request -> response.
-	m = step(step(m, keyCtrlW), runes("l"))
-	if m.focus != focusRequest {
-		t.Errorf("ctrl+w l: focus = %v, want Request", m.focus)
-	}
+	// ctrl+w l moves request -> response.
 	m = step(step(m, keyCtrlW), runes("l"))
 	if m.focus != focusResponse {
 		t.Errorf("second ctrl+w l: focus = %v, want Response", m.focus)
@@ -116,6 +112,12 @@ func TestFocusNavigation(t *testing.T) {
 	if got := step(urlNormal(base), runes("j")).focus; got != focusURL {
 		t.Errorf("j from URL normal should not change focus, got %v", got)
 	}
+
+	// The method selector is also on the top bar, so ctrl+w j goes to Body too.
+	m = step(step(base.setFocus(focusMethod), keyCtrlW), runes("j"))
+	if m.focus != focusRequest || m.reqPane.tab != tabBody {
+		t.Errorf("ctrl+w j from Method: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
+	}
 }
 
 func TestArrowsNeverChangeFocus(t *testing.T) {
@@ -134,8 +136,9 @@ func TestArrowsNeverChangeFocus(t *testing.T) {
 	}
 
 	// Focus changes require tab or the ctrl+w chord — ctrl+w + arrow works.
-	if got := step(step(base, keyCtrlW), keyDown).focus; got != focusCollection {
-		t.Errorf("ctrl+w ↓ from URL: focus = %v, want Collections", got)
+	m := step(step(base, keyCtrlW), keyDown)
+	if m.focus != focusRequest || m.reqPane.tab != tabBody {
+		t.Errorf("ctrl+w ↓ from URL: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
 	}
 	if got := step(step(base.setFocus(focusResponse), keyCtrlW), keyUp).focus; got != focusURL {
 		t.Errorf("ctrl+w ↑ from Response: focus = %v, want URL (top row)", got)
