@@ -24,7 +24,7 @@ const minURLInputW = 12
 // collectionsMinWidth is the terminal width below which the collections tree is
 // auto-hidden, handing its columns to the request/response panes. The user's
 // show/hide preference is remembered and restored when the window widens.
-const collectionsMinWidth = 60
+const collectionsMinWidth = 90
 
 // borderOverhead is the rendered width/height added by a bordered pane.
 // Lip Gloss' Width/Height values include padding, but not borders.
@@ -33,6 +33,16 @@ const borderOverhead = 2
 // methodPaneInnerW is the inner width of the method selector pane: the longest
 // method label ("OPTIONS", 7) plus one cell of horizontal padding each side.
 const methodPaneInnerW = 9
+
+// applyLayout pushes computed sizes into child components. Keeping this in one
+// place prevents border/padding accounting from drifting between Update and View.
+func (m Model) applyLayout(l layout) Model {
+	m.vp.Width = l.respViewportW
+	m.vp.Height = l.respViewportH
+	m.collectionPane.width = l.collectionInnerW
+	m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
+	return m
+}
 
 func (m Model) computeLayout() layout {
 	gap := 1

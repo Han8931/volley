@@ -99,7 +99,12 @@ reach it with `tab`/`shift+tab` or the `ctrl+w` window motions. The timeout fiel
 is edited inline with `,t` or `:timeout`. Arrow keys only move *within* the
 focused pane, never between panes.
 
-Saved requests are stored as JSON under `~/.config/volley/collections/`.
+Saved requests are stored as JSON under Volley's user config directory:
+
+- Linux: `~/.config/volley/collections/`
+- macOS: `~/Library/Application Support/volley/collections/`
+- Windows: `%AppData%\\volley\\collections\\`
+
 Groups are folders: slash-separated names like `APISet1/auth/login` nest a
 request inside groups. Empty groups persist (they keep a `.keep` marker), while
 folders created implicitly by saving are cleaned up when their last request goes.
@@ -122,5 +127,6 @@ sent.
 - [x] **curl import/export** — `:import curl …` and `:copy curl`
 - [ ] Load testing (concurrency, RPS, p50/p95/p99, live charts)
 
-> Note: collections are stored as native JSON under `~/.config/volley/collections/`.
+> Note: collections are stored as native JSON under Volley's user config directory
+> (`~/.config/volley/collections/` on Linux, `~/Library/Application Support/volley/collections/` on macOS).
 > Posting-format import/export is not implemented yet; curl import/export is supported.

@@ -331,7 +331,7 @@ func (m Model) viewStatusBar() string {
 	if hintW < 0 {
 		hintW = 0
 	}
-	hint := hintStyle.Width(hintW).Render(hints)
+	hint := hintStyle.Width(hintW).Render(truncateRunes(hints, hintW))
 
 	bar := lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, hint)
 	// Clamp so a long name on a very narrow terminal can't overflow the row.

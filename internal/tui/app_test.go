@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -325,6 +326,20 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
+func assertViewFits(t *testing.T, m Model) {
+	t.Helper()
+	view := strings.TrimRight(stripANSI(m.View()), "\n")
+	lines := strings.Split(view, "\n")
+	if len(lines) > m.height {
+		t.Fatalf("rendered height = %d, want <= %d", len(lines), m.height)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("line %d rendered width = %d, want <= %d", i, w, m.width)
+		}
+	}
+}
+
 func clickAt(x, y int) tea.MouseMsg {
 	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
 }
@@ -576,23 +591,40 @@ func TestDragSelectCopiesResponse(t *testing.T) {
 	}
 }
 
-func TestLongResponseDoesNotExpandLayout(t *testing.T) {
-	const width, height = 120, 40
-	m := step(New(), tea.WindowSizeMsg{Width: width, Height: height})
-	m.hasResp = true
-	m.resp = model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(strings.Repeat("0123456789", 1000))}
-	m.respText = renderResponseBody(m.resp, m.vp.Width, false)
-	m.vp.SetContent(m.currentResponseText())
-
-	view := stripANSI(m.View())
-	lines := strings.Split(view, "\n")
-	if len(lines) > height {
-		t.Fatalf("long response expanded rendered height to %d, want <= %d", len(lines), height)
+func TestResponseContentDoesNotExpandLayout(t *testing.T) {
+	cases := []struct {
+		name string
+		w, h int
+		resp model.Response
+	}{
+		{
+			name: "long single line body",
+			w:    120,
+			h:    40,
+			resp: model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(strings.Repeat("0123456789", 1000))},
+		},
+		{
+			name: "long error",
+			w:    100,
+			h:    30,
+			resp: model.Response{Err: errors.New(strings.Repeat("network failure ", 80))},
+		},
+		{
+			name: "narrow pretty json",
+			w:    70,
+			h:    24,
+			resp: model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"items":[{"name":"` + strings.Repeat("x", 300) + `"}]}`)},
+		},
 	}
-	for i, line := range lines {
-		if w := lipgloss.Width(line); w > width {
-			t.Fatalf("line %d expanded rendered width to %d, want <= %d", i, w, width)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := step(New(), tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
+			m.hasResp = true
+			m.resp = tc.resp
+			m.respText = renderResponseBody(m.resp, m.vp.Width, false)
+			m.vp.SetContent(m.currentResponseText())
+			assertViewFits(t, m)
+		})
 	}
 }
 
@@ -679,7 +711,7 @@ func TestWheelArrowSuppressionExpires(t *testing.T) {
 	m = wm.(Model)
 	// Simulate the suppression window having elapsed: a later, intentional Down
 	// press must reach the Method pane and cycle the method.
-	m.suppressWheelAt = m.suppressWheelAt.Add(-2 * wheelArrowWindow)
+	m.wheel.armedAt = m.wheel.armedAt.Add(-2 * wheelArrowWindow)
 	km, _ := m.Update(keyDown)
 	m = km.(Model)
 	if m.methodIdx == 0 {
