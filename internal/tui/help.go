@@ -32,7 +32,8 @@ var helpSections = []struct {
 	{"Collections / NerdTree", [][2]string{
 		{"j / k  ·  gg / G", "move selection  ·  P jump to top"},
 		{"o / enter / l", "open request or toggle group"},
-		{"O / X", "expand / collapse group recursively"},
+		{"O / X  ·  A", "expand/collapse recursively  ·  widen tree"},
+		{"space", "mark/unmark request, then move down"},
 		{"h  ·  p", "collapse group / jump to parent"},
 		{"x", "close parent group"},
 		{",n  ·  R", "show / hide tree  ·  reload from disk"},

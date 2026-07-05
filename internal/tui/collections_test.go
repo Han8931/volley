@@ -164,6 +164,53 @@ func TestGroupDeleteConfirmation(t *testing.T) {
 	}
 }
 
+func TestTreeATogglesWidePane(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusCollection)
+	normalW := m.computeLayout().collectionInnerW
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m = next.(Model)
+	wideW := m.computeLayout().collectionInnerW
+	if !m.collectionWide || wideW <= normalW {
+		t.Fatalf("A should widen the tree, normal=%d wide=%d collectionWide=%v", normalW, wideW, m.collectionWide)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m = next.(Model)
+	if m.collectionWide || m.computeLayout().collectionInnerW != normalW {
+		t.Fatalf("second A should restore tree width, got width=%d collectionWide=%v", m.computeLayout().collectionInnerW, m.collectionWide)
+	}
+}
+
+func TestSpaceMarksRequestAndMovesCursorDown(t *testing.T) {
+	items := []collections.Item{{Name: "a", Method: "GET"}, {Name: "b", Method: "POST"}}
+	p := newCollectionPane(items, "~/x")
+	p.focused = true
+	p.width = 24
+	p.cursor = 1 // first file; row 0 is root
+
+	p.updateNormal(tea.KeyMsg{Type: tea.KeySpace})
+	if !p.marked["a"] {
+		t.Fatal("space should mark the request under the cursor")
+	}
+	if p.cursor != 2 {
+		t.Fatalf("space should move cursor down one row, cursor=%d", p.cursor)
+	}
+	if got := stripANSI(p.view()); strings.Contains(got, "☑") || strings.Contains(got, "☐") {
+		t.Fatalf("marked request should not render checkbox markers, got:\n%s", got)
+	} else if !strings.Contains(got, "GET a") {
+		t.Fatalf("marked request should still render method and name, got:\n%s", got)
+	}
+
+	p.updateNormal(tea.KeyMsg{Type: tea.KeySpace})
+	if !p.marked["b"] {
+		t.Fatal("space on next request should mark it too")
+	}
+	if p.cursor != 2 {
+		t.Fatalf("space at the bottom should stay on the last row, cursor=%d", p.cursor)
+	}
+}
+
 func TestCollectionCursorClampedAfterCollapse(t *testing.T) {
 	items := []collections.Item{
 		{Name: "a/one"}, {Name: "a/two"}, {Name: "b/three"},

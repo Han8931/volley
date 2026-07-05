@@ -29,10 +29,11 @@ type collectionPane struct {
 	pendD    bool
 	pendG    bool
 	expanded map[string]bool
+	marked   map[string]bool // multi-selected request names
 }
 
 func newCollectionPane(items []collections.Item, root string) collectionPane {
-	p := collectionPane{expanded: map[string]bool{"": true}, root: root}
+	p := collectionPane{expanded: map[string]bool{"": true}, marked: map[string]bool{}, root: root}
 	p.SetItems(items)
 	return p
 }
@@ -73,6 +74,24 @@ func (p *collectionPane) SetItems(items []collections.Item) {
 		}
 	}
 	p.expanded = next
+
+	// Keep marks only for saved requests that still exist. Directories are not
+	// selectable, so they never enter the marked set.
+	validFiles := make(map[string]bool)
+	for _, it := range items {
+		if !it.IsDir {
+			validFiles[it.Name] = true
+		}
+	}
+	if p.marked == nil {
+		p.marked = map[string]bool{}
+	} else {
+		for name := range p.marked {
+			if !validFiles[name] {
+				delete(p.marked, name)
+			}
+		}
+	}
 	p.clampCursor()
 }
 
@@ -154,6 +173,8 @@ func (p *collectionPane) updateNormal(msg tea.KeyMsg) (action string) {
 		if row, ok := p.current(); ok && !row.file {
 			p.setExpandedRecursive(row.name, true)
 		}
+	case "A": // NerdTree-style zoom: widen/narrow the tree pane
+		return "toggle-wide"
 	case "X": // collapse the folder and all descendants recursively
 		if row, ok := p.current(); ok && !row.file {
 			p.setExpandedRecursive(row.name, false)
@@ -175,6 +196,17 @@ func (p *collectionPane) updateNormal(msg tea.KeyMsg) (action string) {
 				p.moveToFolder(parent)
 				p.clampCursor()
 			}
+		}
+	case " ":
+		if row, ok := p.current(); ok && row.file {
+			if p.marked[row.name] {
+				delete(p.marked, row.name)
+			} else {
+				p.marked[row.name] = true
+			}
+		}
+		if p.cursor < len(rows)-1 {
+			p.cursor++
 		}
 	case "R": // reload from disk
 		return "refresh"
@@ -252,14 +284,20 @@ func (p collectionPane) view() string {
 		onCursor := i == p.cursor
 
 		// File rows show a colored HTTP-method badge before the name (Bruno-style,
-		// e.g. "POST api_test_1"). Groups/root keep their icon label.
+		// e.g. "POST api_test_1"). Marked rows get a compact light block over the
+		// request text itself — no checkbox glyph and no full-width fill, so long
+		// selections don't visually swamp the tree or affect layout.
 		if row.file && row.method != "" {
+			marked := p.marked[row.name]
 			nameSt := lipgloss.NewStyle()
 			methodSt := lipgloss.NewStyle().Foreground(methodColor(row.method)).Bold(true)
 			switch {
 			case selected:
 				nameSt = nameSt.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
 				methodSt = methodSt.Background(colSel)
+			case marked:
+				nameSt = nameSt.Foreground(lipgloss.Color("#FFFFFF")).Background(colMarked)
+				methodSt = methodSt.Background(colMarked)
 			case onCursor:
 				nameSt = nameSt.Foreground(colAccent)
 			default:
@@ -274,6 +312,7 @@ func (p collectionPane) view() string {
 		}
 
 		text := indent + row.label
+		marked := row.file && p.marked[row.name]
 		st := lipgloss.NewStyle()
 		if p.width > 0 {
 			st = st.MaxWidth(p.width)
@@ -281,6 +320,8 @@ func (p collectionPane) view() string {
 		switch {
 		case selected:
 			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
+		case marked:
+			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colMarked)
 		case onCursor:
 			st = st.Foreground(colAccent)
 		case row.file:

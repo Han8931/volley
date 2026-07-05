@@ -15,6 +15,7 @@ var (
 	colOK     = lipgloss.Color("#34D399")
 	colMethod = lipgloss.Color("#F59E0B")
 	colSel    = lipgloss.Color("#2A2440")
+	colMarked = lipgloss.Color("#4B5563") // multi-selected tree rows (ranger/lf-style block)
 )
 
 const sendButtonText = " SEND "

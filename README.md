@@ -42,6 +42,8 @@ go run .          # or: go build -o volley . && ./volley
 | `j/k` · `gg`/`G` · `P` | move selection · first/last · jump to top |
 | `enter`/`l`/`o` | open request or toggle group                     |
 | `O` / `X`       | expand / collapse group **recursively**          |
+| `A`             | widen/narrow the tree to inspect long names      |
+| `space`         | mark/unmark request, then move cursor down       |
 | `h` · `p` · `x` | collapse group · jump to parent · close parent   |
 | `,n` · `R`      | show / hide tree · reload from disk              |
 | `m`             | open NerdTree-style menu (context-aware)         |

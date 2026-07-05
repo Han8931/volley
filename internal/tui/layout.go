@@ -54,15 +54,24 @@ func (m Model) computeLayout() layout {
 	// Width/Height below are Lip Gloss style sizes; borders add 2 cells.
 	collTotalW := 0
 	if m.collectionShown {
-		collTotalW = m.width / 5
-		if collTotalW < 22 && m.width >= 90 {
-			collTotalW = 22
-		}
-		if collTotalW < 14 {
-			collTotalW = 14
-		}
-		if collTotalW > m.width-20 {
-			collTotalW = m.width / 3
+		if m.collectionWide {
+			// NerdTree-style zoom: make the tree wide enough to inspect long saved
+			// request names, while leaving a usable editor/response area on the right.
+			collTotalW = m.width / 2
+			if maxTree := m.width - 40; collTotalW > maxTree {
+				collTotalW = maxTree
+			}
+		} else {
+			collTotalW = m.width / 5
+			if collTotalW < 22 && m.width >= 90 {
+				collTotalW = 22
+			}
+			if collTotalW < 14 {
+				collTotalW = 14
+			}
+			if collTotalW > m.width-20 {
+				collTotalW = m.width / 3
+			}
 		}
 	}
 	collW := collTotalW - borderOverhead

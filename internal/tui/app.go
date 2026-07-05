@@ -77,6 +77,7 @@ type Model struct {
 	collectionPane  collectionPane
 	collectionShown bool // effective tree visibility: the preference, gated by width
 	collectionPref  bool // user's show/hide preference, restored when the window is wide enough
+	collectionWide  bool // NerdTree-style zoom: widen the tree so long request names are visible
 	currentName     string
 
 	vars    vars.Store
@@ -511,6 +512,14 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "delete":
 		if row, ok := m.collectionPane.current(); ok && row.name != "" {
 			m = m.askDeleteConfirm(row.name, !row.file)
+		}
+	case "toggle-wide":
+		m.collectionWide = !m.collectionWide
+		m = m.applyLayout(m.computeLayout())
+		if m.collectionWide {
+			m.statusMsg = "collections tree widened"
+		} else {
+			m.statusMsg = "collections tree restored"
 		}
 	case "refresh":
 		m.refreshCollections()
