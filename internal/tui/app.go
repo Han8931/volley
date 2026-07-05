@@ -99,6 +99,15 @@ type Model struct {
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
 	pendingComma  bool // for leader-style commands, currently ",n" tree toggle
 
+	// Some terminals (iTerm2 et al.) emit arrow-key escape sequences alongside —
+	// or instead of — wheel mouse events on the alternate screen. The count and
+	// exact direction of synthetic arrows can vary by terminal/trackpad gesture,
+	// so after a wheel event we swallow vertical arrows for a brief window rather
+	// than a fixed count. That keeps the focused pane still while the wheel
+	// scrolls the response, without eating real, later arrow presses.
+	suppressWheelKey string
+	suppressWheelAt  time.Time
+
 	// Double-click tracking for the collections tree: a second click on the same
 	// row within doubleClickWindow opens (a file) or toggles (a folder).
 	lastTreeClickRow int
@@ -237,7 +246,12 @@ func (m Model) inInsert() bool {
 }
 
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return textinput.Blink }
+func (m Model) Init() tea.Cmd {
+	// The alternate-scroll reset (DECSET ?1007) is emitted from the renderer via
+	// safeModel.View, so it lands in the alternate-screen buffer every frame
+	// rather than racing terminal setup here.
+	return textinput.Blink
+}
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -246,7 +260,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m = m.applyCollectionVisibility()
 		l := m.computeLayout()
-		m.vp.Width = l.respInnerW
+		m.vp.Width = l.respViewportW
 		m.vp.Height = l.respViewportH
 		m.collectionPane.width = l.collectionInnerW
 		m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
@@ -267,6 +281,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.shouldSuppressWheelArrow(msg) {
+			return m, nil
+		}
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
@@ -650,18 +667,60 @@ const collectionsHeaderRows = 2
 // mouseScrollLines is how many lines one wheel notch scrolls the response body.
 const mouseScrollLines = 3
 
+// wheelArrowWindow is how long after a wheel notch we treat matching arrow keys
+// as terminal-injected (alternate-scroll) rather than real presses. Some
+// terminals emit the synthetic arrows just BEFORE the wheel mouse event, so a
+// notch's arrows are only covered by the PREVIOUS notch's window — the window
+// therefore has to span the gap between notches during a continuous scroll.
+// It stays well under human reaction time, so intentional arrow presses a beat
+// after scrolling still register.
+const wheelArrowWindow = 250 * time.Millisecond
+
 // handleScroll scrolls the response viewport when the wheel turns over the
-// response pane. It leaves focus untouched — scrolling shouldn't steal it.
+// response pane. It leaves focus untouched — scrolling shouldn't steal it — and
+// arms a short window in which matching synthetic arrow keys are swallowed.
 func (m Model) handleScroll(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if !m.hasResp || !m.overResponsePane(msg.X, msg.Y) {
+	if !m.overResponsePane(msg.X, msg.Y) {
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelUp {
-		m.vp.LineUp(mouseScrollLines)
+		if m.hasResp {
+			m.vp.LineUp(mouseScrollLines)
+		}
+		m.suppressWheelKey = "up"
 	} else {
-		m.vp.LineDown(mouseScrollLines)
+		if m.hasResp {
+			m.vp.LineDown(mouseScrollLines)
+		}
+		m.suppressWheelKey = "down"
 	}
+	m.suppressWheelAt = time.Now()
 	return m, nil
+}
+
+// shouldSuppressWheelArrow reports whether msg is a synthetic vertical arrow key
+// emitted by the terminal as part of a recent wheel notch, which we drop so the
+// focused pane doesn't move while the wheel scrolls the response.
+func (m *Model) shouldSuppressWheelArrow(msg tea.KeyMsg) bool {
+	if m.suppressWheelKey == "" {
+		return false
+	}
+	if time.Since(m.suppressWheelAt) > wheelArrowWindow {
+		m.suppressWheelKey = "" // the burst is over
+		return false
+	}
+	// Most terminals send the matching arrow (wheel down -> Down), but some send
+	// mixed vertical arrows during high-resolution/touchpad scrolling. A few send
+	// normal-mode-equivalent j/k bytes. Suppress vertical navigation while the
+	// wheel burst is active.
+	s := msg.String()
+	if s == "up" || s == "down" || s == "j" || s == "k" {
+		return true
+	}
+	// A different key within the window is a real, intentional press: stop
+	// suppressing so it and later arrows aren't eaten.
+	m.suppressWheelKey = ""
+	return false
 }
 
 // overResponsePane reports whether (x,y) falls inside the response pane's box.
@@ -675,7 +734,8 @@ func (m Model) overResponsePane(x, y int) bool {
 		return false
 	}
 	respX := rightX + l.reqInnerW + borderOverhead + l.gap
-	return x >= respX && x < respX+l.respInnerW+borderOverhead
+	respBottom := topBarH + l.respInnerH + borderOverhead
+	return y < respBottom && x >= respX && x < respX+l.respInnerW+borderOverhead
 }
 
 // textPos is a position in the response text: a 0-based line and rune column.
@@ -698,7 +758,7 @@ func (m Model) responseTextPos(x, y int) (textPos, bool) {
 	}
 	respX := rightX + l.reqInnerW + borderOverhead + l.gap
 	contentX := respX + 2     // pane border + padding
-	vpTopY := topBarH + 1 + 2 // pane top border + status line + tab bar
+	vpTopY := topBarH + 1 + 1 // pane top border + combined tab/status header row
 	if y < vpTopY {
 		return textPos{}, false
 	}

@@ -45,8 +45,21 @@ func (s safeModel) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	return safeModel{m: next}, c
 }
 
+// disableAltScroll is DECRST ?1007 — it turns off "alternate scroll mode", in
+// which many terminals (iTerm2, etc.) translate the mouse wheel into arrow
+// keys while the alternate screen is active. Left on, one wheel notch would
+// both scroll the response (the mouse event we handle) AND move the focused
+// pane via the injected arrows — visible as "the other panes move," especially
+// once the response is scrolled to its end and can't absorb the wheel.
+//
+// It must be emitted from within a rendered frame: Bubble Tea enters the
+// alternate screen before the first frame, so writing it any earlier (e.g. in
+// main before Run) lands on the normal buffer and never takes effect here.
+const disableAltScroll = "\x1b[?1007l"
+
 // View delegates to the inner model, falling back to a readable message rather
-// than a corrupt frame if rendering panics.
+// than a corrupt frame if rendering panics. It prefixes the frame with the
+// alternate-scroll reset so the wheel arrives only as mouse events.
 func (s safeModel) View() (v string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -55,7 +68,7 @@ func (s safeModel) View() (v string) {
 				"press a key to continue, or q to quit"
 		}
 	}()
-	return s.m.View()
+	return disableAltScroll + s.m.View()
 }
 
 // crashLogPath is where panics are appended. It sits alongside the collections

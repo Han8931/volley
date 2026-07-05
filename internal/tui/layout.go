@@ -12,6 +12,7 @@ type layout struct {
 	collectionInnerH int  // tree pane height; spans URL + body area
 	bodyInnerH       int  // inner height of the request pane / whole lower area
 	respInnerH       int  // inner height of the response pane
+	respViewportW    int  // scrollable body width inside the response pane padding
 	respViewportH    int  // scrollable body height inside the response pane
 	showTimeout      bool // whether the URL bar has room for the inline timeout readout
 }
@@ -99,8 +100,16 @@ func (m Model) computeLayout() layout {
 	// options bar is gone (timeout moved inline into the URL bar).
 	respH := bodyH
 
-	// Response pane reserves: status line (1) + tab bar (1) for the viewport.
-	vpH := respH - 2
+	// Response pane reserves one header row (the tab bar, which also carries the
+	// status + timing flush-right) above the viewport. Its bordered style also
+	// has one column of horizontal padding on each side, so the viewport itself
+	// must be two columns narrower than the pane's inner width; otherwise long
+	// response lines can make the rendered box wider than the layout budget.
+	vpW := respW - 2
+	if vpW < 1 {
+		vpW = 1
+	}
+	vpH := respH - 1
 	if vpH < 1 {
 		vpH = 1
 	}
@@ -115,6 +124,7 @@ func (m Model) computeLayout() layout {
 		collectionInnerH: collectionH,
 		bodyInnerH:       bodyH,
 		respInnerH:       respH,
+		respViewportW:    vpW,
 		respViewportH:    vpH,
 		showTimeout:      showTimeout,
 	}

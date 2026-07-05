@@ -544,7 +544,7 @@ func TestDragSelectCopiesResponse(t *testing.T) {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
 	contentX := rightX + l.reqInnerW + borderOverhead + l.gap + 2
-	vpTopY := topBarH + 1 + 2
+	vpTopY := topBarH + 1 + 1
 
 	press := tea.MouseMsg{X: contentX, Y: vpTopY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	md, _ := m.Update(press)
@@ -576,6 +576,26 @@ func TestDragSelectCopiesResponse(t *testing.T) {
 	}
 }
 
+func TestLongResponseDoesNotExpandLayout(t *testing.T) {
+	const width, height = 120, 40
+	m := step(New(), tea.WindowSizeMsg{Width: width, Height: height})
+	m.hasResp = true
+	m.resp = model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(strings.Repeat("0123456789", 1000))}
+	m.respText = renderResponseBody(m.resp, m.vp.Width, false)
+	m.vp.SetContent(m.currentResponseText())
+
+	view := stripANSI(m.View())
+	lines := strings.Split(view, "\n")
+	if len(lines) > height {
+		t.Fatalf("long response expanded rendered height to %d, want <= %d", len(lines), height)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > width {
+			t.Fatalf("line %d expanded rendered width to %d, want <= %d", i, w, width)
+		}
+	}
+}
+
 func TestMouseWheelIgnoredOutsideResponse(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.hasResp = true
@@ -590,6 +610,99 @@ func TestMouseWheelIgnoredOutsideResponse(t *testing.T) {
 	got, _ := m.Update(wheelAt(reqX, y, tea.MouseButtonWheelDown))
 	if got.(Model).vp.YOffset != 0 {
 		t.Errorf("wheel over the request pane must not scroll the response, YOffset=%d", got.(Model).vp.YOffset)
+	}
+}
+
+func TestMouseWheelOverResponseSuppressesSyntheticArrows(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	m.vp.GotoBottom()
+	x, y := responsePanePoint(m)
+
+	// Some terminals emit arrow keys after a wheel event, and the count per notch
+	// is terminal-dependent. Even at the bottom of the response, none of those
+	// synthetic Downs may leak into the focused Method pane and cycle GET -> POST.
+	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = wm.(Model)
+	if m.methodIdx != 0 {
+		t.Fatalf("wheel itself should not change the focused method pane, methodIdx=%d", m.methodIdx)
+	}
+	// Fire more synthetic arrows than mouseScrollLines to prove the suppression
+	// isn't a fixed count that lets the tail leak through.
+	for i := 0; i < mouseScrollLines+3; i++ {
+		km, _ := m.Update(keyDown)
+		m = km.(Model)
+	}
+	if m.methodIdx != 0 {
+		t.Errorf("synthetic Downs after a wheel must all be suppressed, methodIdx=%d", m.methodIdx)
+	}
+}
+
+func TestMouseWheelOverResponseSuppressesOppositeSyntheticArrows(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	x, y := responsePanePoint(m)
+
+	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = wm.(Model)
+	km, _ := m.Update(keyUp)
+	m = km.(Model)
+	if m.methodIdx != 0 {
+		t.Errorf("opposite vertical arrows during a wheel burst must be suppressed, methodIdx=%d", m.methodIdx)
+	}
+}
+
+func TestMouseWheelOverResponseSuppressesSyntheticJK(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	x, y := responsePanePoint(m)
+
+	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = wm.(Model)
+	km, _ := m.Update(runes("j"))
+	m = km.(Model)
+	if m.methodIdx != 0 {
+		t.Errorf("synthetic j during a wheel burst must be suppressed, methodIdx=%d", m.methodIdx)
+	}
+}
+
+func TestWheelArrowSuppressionExpires(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	x, y := responsePanePoint(m)
+
+	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = wm.(Model)
+	// Simulate the suppression window having elapsed: a later, intentional Down
+	// press must reach the Method pane and cycle the method.
+	m.suppressWheelAt = m.suppressWheelAt.Add(-2 * wheelArrowWindow)
+	km, _ := m.Update(keyDown)
+	m = km.(Model)
+	if m.methodIdx == 0 {
+		t.Error("a real arrow press after the window should not be suppressed")
+	}
+}
+
+func TestWheelArrowSuppressionStopsOnOtherKey(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	x, y := responsePanePoint(m)
+
+	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = wm.(Model)
+	// A non-matching key within the window ends suppression, so a following Down
+	// is treated as a real press.
+	rm, _ := m.Update(runes("r")) // cycles the method itself (GET -> POST)
+	m = rm.(Model)
+	km, _ := m.Update(keyDown)
+	m = km.(Model)
+	if m.methodIdx == 1 {
+		t.Error("after an intentional key, a later Down should no longer be suppressed")
 	}
 }
 

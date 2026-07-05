@@ -30,24 +30,39 @@ func statusColor(code int) lipgloss.Color {
 	}
 }
 
-// renderStatusLine is the one-line summary shown atop the response pane.
-func renderStatusLine(resp model.Response) string {
-	if resp.Err != nil {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true).
-			Render("✗ " + resp.Err.Error())
+// renderStatusSummary is the response status + timing shown in the response
+// pane's header row. It fits within budget columns, shedding the size and then
+// the timing when the pane is too narrow to hold the full summary.
+func renderStatusSummary(resp model.Response, budget int) string {
+	clip := func(s string) string {
+		return lipgloss.NewStyle().MaxWidth(max(budget, 0)).Render(s)
 	}
-	status := lipgloss.NewStyle().Foreground(statusColor(resp.StatusCode)).Bold(true).
+	if resp.Err != nil {
+		// The full error also appears in the body, so clipping here is safe.
+		return clip(lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true).
+			Render("✗ " + resp.Err.Error()))
+	}
+	code := lipgloss.NewStyle().Foreground(statusColor(resp.StatusCode)).Bold(true).
 		Render(resp.Status)
+	dimStyle := lipgloss.NewStyle().Foreground(colDim)
 	sizeStr := humanize.Bytes(uint64(resp.Size))
 	if resp.Truncated {
 		sizeStr += "+ (truncated)"
 	}
-	meta := lipgloss.NewStyle().Foreground(colDim).Render(fmt.Sprintf(
-		" · %s · %s",
-		resp.Duration.Round(time.Millisecond),
-		sizeStr,
-	))
-	return status + meta
+	dur := resp.Duration.Round(time.Millisecond).String()
+
+	// Widest first; pick the largest tier that fits so segments drop whole
+	// rather than clipping mid-word.
+	for _, tier := range []string{
+		code + dimStyle.Render(fmt.Sprintf(" · %s · %s", dur, sizeStr)),
+		code + dimStyle.Render(" · "+dur),
+		code,
+	} {
+		if lipgloss.Width(tier) <= budget {
+			return tier
+		}
+	}
+	return clip(code)
 }
 
 // renderResponseBody returns the scrollable body content. Unless raw is set, a

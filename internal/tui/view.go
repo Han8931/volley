@@ -212,18 +212,46 @@ func (m Model) viewBody(l layout) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, request, gap, response)
 }
 
-// viewResponseInner is the content placed inside the response pane: a status
-// line on top and the scrollable body viewport below.
+// viewResponseInner is the content placed inside the response pane: a header
+// row (Body/Headers tabs on the left, status + timing flush-right) above the
+// scrollable body viewport.
 func (m Model) viewResponseInner() string {
 	switch {
-	case m.sending:
+	case m.sending && !m.hasResp:
+		// Nothing to keep on screen yet — show the spinner centered in the pane.
 		return title("RESPONSE") + "\n\n" + m.spin.View() + dim(" sending…")
 	case !m.hasResp:
 		return title("RESPONSE") + "\n\n" +
 			dim("Send a request with ") + keyHint("⏎") + dim(" to see the result here.")
 	default:
-		return renderStatusLine(m.resp) + "\n" + m.respTabBar() + "\n" + m.vp.View()
+		// A completed response, or a resend in flight: keep the previous body
+		// visible and let the header carry the status (or the spinner while
+		// sending). The viewport width already accounts for the pane's horizontal
+		// Padding(0,1), so target it for a header flush with the body's edge.
+		return m.respHeaderBar(m.vp.Width) + "\n" + m.vp.View()
 	}
+}
+
+// respHeaderBar lays the Body/Headers tabs against the left edge with the
+// response status + timing pushed to the right, filling width. When the two
+// would collide (a narrow pane) the status sits just past the tabs and the
+// pane clips the overflow, keeping the header to a single row.
+func (m Model) respHeaderBar(width int) string {
+	tabs := m.respTabBar()
+	// The right side shows the spinner while a request is in flight, otherwise
+	// the response status + timing. Reserve at least one column of separation.
+	var right string
+	if m.sending {
+		right = m.spin.View() + dim(" sending…")
+	} else {
+		right = renderStatusSummary(m.resp, width-lipgloss.Width(tabs)-1)
+	}
+	gap := width - lipgloss.Width(tabs) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	line := tabs + strings.Repeat(" ", gap) + right
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
 // respTabBar renders the Body / Headers selector for the response pane. The
