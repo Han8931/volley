@@ -17,9 +17,10 @@ import (
 // Item is one entry shown in the collections tree: a saved request (IsDir
 // false) or a group/folder (IsDir true).
 type Item struct {
-	Name  string // slash-separated name without extension, e.g. "auth/login"
-	Path  string // absolute file path
-	IsDir bool   // true for a group (directory)
+	Name   string // slash-separated name without extension, e.g. "auth/login"
+	Path   string // absolute file path
+	IsDir  bool   // true for a group (directory)
+	Method string // HTTP method for a request item (empty for groups)
 }
 
 // Store stores requests as JSON files below Root. Groups are directories;
@@ -65,7 +66,11 @@ func (s Store) List() ([]Item, error) {
 		if filepath.Ext(path) != ".json" {
 			return nil // skip markers and other files
 		}
-		out = append(out, Item{Name: strings.TrimSuffix(relSlash, ".json"), Path: path})
+		out = append(out, Item{
+			Name:   strings.TrimSuffix(relSlash, ".json"),
+			Path:   path,
+			Method: readMethod(path),
+		})
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {
@@ -76,6 +81,21 @@ func (s Store) List() ([]Item, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// readMethod returns the HTTP method stored in the request file at path, with
+// the same GET fallback Load applies. It is best-effort: an unreadable or
+// corrupt file yields "" so listing never fails on one bad entry.
+func readMethod(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var sr storedRequest
+	if err := json.Unmarshal(b, &sr); err != nil {
+		return ""
+	}
+	return sr.toModel().Method
 }
 
 // Save writes req under name. Name may include folders separated by '/'.

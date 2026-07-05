@@ -74,6 +74,15 @@ func (b *Buffer) CursorEnd() {
 	b.clampForMode()
 }
 
+// SetCursorCol places the cursor at col on the first line, clamped to the
+// current mode's bounds. Intended for single-line fields positioned by a mouse
+// click; multi-line callers should use motions instead.
+func (b *Buffer) SetCursorCol(col int) {
+	b.row = 0
+	b.col = col
+	b.clampForMode()
+}
+
 func (b *Buffer) setText(text string) {
 	raw := strings.Split(text, "\n")
 	b.lines = make([][]rune, len(raw))

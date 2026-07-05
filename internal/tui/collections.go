@@ -12,11 +12,12 @@ import (
 )
 
 type treeRow struct {
-	label string
-	name  string
-	depth int
-	file  bool
-	open  bool
+	label  string
+	name   string
+	method string // HTTP method for file rows (shown as a colored badge)
+	depth  int
+	file   bool
+	open   bool
 }
 
 type collectionPane struct {
@@ -231,22 +232,56 @@ func (p collectionPane) view() string {
 	if rootLabel == "" {
 		rootLabel = "collections"
 	}
+	// Keep the root line to a single row (like the tree rows below) so a long
+	// path doesn't wrap — that would both look messy and desync mouse hit-testing,
+	// which assumes a fixed-height header. Truncate physically (the pane's word
+	// wrap would otherwise break a long path across several rows).
+	rootLine := "root: " + rootLabel
+	if p.width > 2 {
+		rootLine = truncateRunes(rootLine, p.width-2) // leave room for the pane padding
+	}
 	header := []string{
 		title("COLLECTIONS"),
-		dim("root: " + rootLabel),
+		dim(rootLine),
 	}
 
 	lines := header
 	for i, row := range p.rows() {
-		text := strings.Repeat("  ", row.depth) + row.label
+		indent := strings.Repeat("  ", row.depth)
+		selected := p.focused && i == p.cursor
+		onCursor := i == p.cursor
+
+		// File rows show a colored HTTP-method badge before the name (Bruno-style,
+		// e.g. "POST api_test_1"). Groups/root keep their icon label.
+		if row.file && row.method != "" {
+			nameSt := lipgloss.NewStyle()
+			methodSt := lipgloss.NewStyle().Foreground(methodColor(row.method)).Bold(true)
+			switch {
+			case selected:
+				nameSt = nameSt.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
+				methodSt = methodSt.Background(colSel)
+			case onCursor:
+				nameSt = nameSt.Foreground(colAccent)
+			default:
+				nameSt = nameSt.Foreground(colFg)
+			}
+			line := indent + methodSt.Render(row.method) + nameSt.Render(" "+row.label)
+			if p.width > 0 {
+				line = lipgloss.NewStyle().MaxWidth(p.width).Render(line)
+			}
+			lines = append(lines, line)
+			continue
+		}
+
+		text := indent + row.label
 		st := lipgloss.NewStyle()
 		if p.width > 0 {
 			st = st.MaxWidth(p.width)
 		}
 		switch {
-		case p.focused && i == p.cursor:
+		case selected:
 			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
-		case i == p.cursor:
+		case onCursor:
 			st = st.Foreground(colAccent)
 		case row.file:
 			st = st.Foreground(colFg)
@@ -264,10 +299,29 @@ func (p collectionPane) view() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+// methodColor maps an HTTP method to its badge color, reusing the JSON
+// highlighter's palette so the UI reads as one system.
+func methodColor(method string) lipgloss.Color {
+	switch method {
+	case "GET":
+		return lipgloss.Color("#34D399") // green
+	case "POST":
+		return lipgloss.Color("#FBBF24") // amber
+	case "PUT":
+		return lipgloss.Color("#60A5FA") // blue
+	case "PATCH":
+		return lipgloss.Color("#C084FC") // purple
+	case "DELETE":
+		return lipgloss.Color("#F87171") // red
+	default:
+		return lipgloss.Color("#93C5FD") // HEAD / OPTIONS / other
+	}
+}
+
 func (p collectionPane) rows() []treeRow {
 	type node struct {
 		dirs  map[string]*node
-		files []string
+		files []collections.Item
 		path  string
 	}
 	root := &node{dirs: map[string]*node{}}
@@ -296,7 +350,7 @@ func (p collectionPane) rows() []treeRow {
 			continue
 		}
 		parent := ensureDir(parts[:len(parts)-1])
-		parent.files = append(parent.files, it.Name)
+		parent.files = append(parent.files, it)
 	}
 
 	rootOpen := p.expanded[""]
@@ -328,10 +382,16 @@ func (p collectionPane) rows() []treeRow {
 				walk(child, depth+1)
 			}
 		}
-		sort.Strings(n.files)
+		sort.Slice(n.files, func(i, j int) bool { return n.files[i].Name < n.files[j].Name })
 		for _, f := range n.files {
-			parts := strings.Split(filepath.ToSlash(f), "/")
-			out = append(out, treeRow{label: "  " + parts[len(parts)-1], name: f, depth: depth, file: true})
+			parts := strings.Split(filepath.ToSlash(f.Name), "/")
+			out = append(out, treeRow{
+				label:  parts[len(parts)-1],
+				name:   f.Name,
+				method: f.Method,
+				depth:  depth,
+				file:   true,
+			})
 		}
 	}
 	walk(root, 1)

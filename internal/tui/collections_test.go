@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,6 +9,32 @@ import (
 	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/model"
 )
+
+func TestTreeRowsShowMethod(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.collectionStore = collections.Store{Root: t.TempDir()}
+	if err := m.collectionStore.Save("api_test_1", model.Request{Method: "POST", URL: "https://x"}); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshCollections()
+
+	var found bool
+	for _, r := range m.collectionPane.rows() {
+		if r.file && r.name == "api_test_1" {
+			found = true
+			if r.method != "POST" {
+				t.Errorf("row method = %q, want POST", r.method)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("api_test_1 row not found in tree")
+	}
+	// The rendered tree shows the method as a Bruno-style prefix.
+	if got := stripANSI(m.collectionPane.view()); !strings.Contains(got, "POST api_test_1") {
+		t.Errorf("tree view should contain %q, got:\n%s", "POST api_test_1", got)
+	}
+}
 
 func TestDeleteConfirmFlow(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})

@@ -141,6 +141,27 @@ func TestArrowsNeverChangeFocus(t *testing.T) {
 	}
 }
 
+func TestMethodPaneRKeyCyclesMethod(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+	if m.req.Method != "GET" {
+		t.Fatalf("default method = %q, want GET", m.req.Method)
+	}
+	// 'r' advances the method (GET -> POST -> PUT).
+	m = step(m, runes("r"))
+	if m.req.Method != "POST" {
+		t.Errorf("after r: method = %q, want POST", m.req.Method)
+	}
+	m = step(m, runes("r"))
+	if m.req.Method != "PUT" {
+		t.Errorf("after rr: method = %q, want PUT", m.req.Method)
+	}
+	// 'R' steps back.
+	m = step(m, runes("R"))
+	if m.req.Method != "POST" {
+		t.Errorf("after R: method = %q, want POST", m.req.Method)
+	}
+}
+
 func TestURLBarTypesDirectly(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 
@@ -333,6 +354,242 @@ func TestSendButtonHitbox(t *testing.T) {
 	}
 	if m.sendButtonClicked(clickAt(x, y+1)) {
 		t.Error("a click on the wrong row should miss")
+	}
+}
+
+// findInView returns the display column and row of the first occurrence of
+// substr in m's rendered view (ANSI stripped), or (-1, -1) if absent. Mouse
+// tests derive click coordinates from the real render rather than hardcoding.
+func findInView(m Model, substr string) (int, int) {
+	for y, ln := range strings.Split(m.View(), "\n") {
+		vis := stripANSI(ln)
+		if idx := strings.Index(vis, substr); idx >= 0 {
+			return lipgloss.Width(vis[:idx]), y
+		}
+	}
+	return -1, -1
+}
+
+func TestClickFocusesMethodAndCycles(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	x, y := findInView(m, "GET")
+	if x < 0 {
+		t.Fatal("method label not found in view")
+	}
+	mm := clickModel(t, m, x, y)
+	if mm.focus != focusMethod {
+		t.Errorf("clicking the method pane should focus it, got %v", mm.focus)
+	}
+	if mm.req.Method != "POST" {
+		t.Errorf("clicking the method should advance GET→POST, got %s", mm.req.Method)
+	}
+}
+
+func TestClickPlacesURLCursor(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.url.SetText("https://zzz.test/x") // short enough to fit, so scroll start = 0
+	x, y := findInView(m, "https://zzz.test/x")
+	if x < 0 {
+		t.Fatal("URL text not found in view")
+	}
+	mm := clickModel(t, m, x+8, y) // click on the 9th character (index 8)
+	if mm.focus != focusURL || !mm.urlInsert() {
+		t.Errorf("clicking the URL should focus + Insert, focus=%v insert=%v", mm.focus, mm.urlInsert())
+	}
+	if _, col := mm.url.Cursor(); col != 8 {
+		t.Errorf("clicked caret column = %d, want 8", col)
+	}
+}
+
+func TestClickSwitchesRequestTab(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	x, y := findInView(m, "Auth")
+	if x < 0 {
+		t.Fatal("Auth tab not found in view")
+	}
+	mm := clickModel(t, m, x, y)
+	if mm.focus != focusRequest {
+		t.Errorf("clicking a tab should focus the request pane, got %v", mm.focus)
+	}
+	if mm.reqPane.tab != tabAuth {
+		t.Errorf("clicking the Auth tab should select it, tab=%d want %d", mm.reqPane.tab, tabAuth)
+	}
+}
+
+func TestClickSelectsCollectionRow(t *testing.T) {
+	m, _ := seededModel(t)
+	x, y := findInView(m, "seed")
+	if x < 0 {
+		t.Fatal("seed item not found in view")
+	}
+	mm := clickModel(t, m, x, y)
+	if mm.focus != focusCollection {
+		t.Errorf("clicking the tree should focus collections, got %v", mm.focus)
+	}
+	if sel, ok := mm.collectionPane.selected(); !ok || sel.Name != "seed" {
+		t.Errorf("clicking the seed row should select it, got %q (ok=%v)", sel.Name, ok)
+	}
+}
+
+func TestDoubleClickOpensTreeItem(t *testing.T) {
+	m, _ := seededModel(t)
+	x, y := findInView(m, "seed")
+	if x < 0 {
+		t.Fatal("seed item not found in view")
+	}
+	m = clickModel(t, m, x, y) // first click: select only
+	if m.currentName == "seed" {
+		t.Fatal("a single click must not open the request")
+	}
+	m = clickModel(t, m, x, y) // second click on the same row: open
+	if m.currentName != "seed" {
+		t.Errorf("double-click should open the seed request, currentName=%q", m.currentName)
+	}
+}
+
+func TestClickIgnoredWhileModalOpen(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	x, y := findInView(m, "GET")
+	m.showHelp = true
+	got, cmd := m.handleClick(clickAt(x, y))
+	if got.(Model).focus != focusURL || got.(Model).req.Method != "GET" || cmd != nil {
+		t.Error("a click while help is open must be ignored")
+	}
+}
+
+// clickModel dispatches a left-click and returns the resulting Model.
+func clickModel(t *testing.T, m Model, x, y int) Model {
+	t.Helper()
+	got, _ := m.handleClick(clickAt(x, y))
+	return got.(Model)
+}
+
+func wheelAt(x, y int, btn tea.MouseButton) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Button: btn, Action: tea.MouseActionPress}
+}
+
+// responsePanePoint returns a coordinate known to fall inside the response pane.
+func responsePanePoint(m Model) (int, int) {
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	return respX + 2, topBarH + 2
+}
+
+func TestMouseWheelScrollsResponse(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200)) // taller than the viewport
+	x, y := responsePanePoint(m)
+
+	// Wheel down over the response pane scrolls it down.
+	down, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
+	m = down.(Model)
+	if m.vp.YOffset == 0 {
+		t.Fatalf("wheel down over the response pane should scroll it, YOffset=%d", m.vp.YOffset)
+	}
+	scrolled := m.vp.YOffset
+
+	// Wheel up scrolls back toward the top.
+	up, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelUp))
+	if up.(Model).vp.YOffset >= scrolled {
+		t.Errorf("wheel up should scroll back up, YOffset=%d (was %d)", up.(Model).vp.YOffset, scrolled)
+	}
+}
+
+func TestSelectedTextExtraction(t *testing.T) {
+	text := "abcdefghij\nklmnop\nqrstuv"
+	// Single line, mid-span.
+	if got := selectedText(text, textPos{0, 2}, textPos{0, 5}); got != "cde" {
+		t.Errorf("single-line select = %q, want cde", got)
+	}
+	// Reversed anchor/cursor normalizes.
+	if got := selectedText(text, textPos{0, 5}, textPos{0, 2}); got != "cde" {
+		t.Errorf("reversed select = %q, want cde", got)
+	}
+	// Multi-line: from line0 col8 through line2 col4.
+	if got := selectedText(text, textPos{0, 8}, textPos{2, 4}); got != "ij\nklmnop\nqrst" {
+		t.Errorf("multi-line select = %q", got)
+	}
+}
+
+func TestRenderWithSelectionPreservesText(t *testing.T) {
+	// Highlighting must never change the underlying characters, only their
+	// styling (which lipgloss strips in this non-TTY test env). Span correctness
+	// is covered by TestSelectedTextExtraction.
+	text := "abcdefghij\nklmnop"
+	for _, span := range [][2]textPos{
+		{{0, 2}, {0, 5}}, // single line
+		{{0, 8}, {1, 3}}, // across the line break
+		{{1, 0}, {1, 6}}, // whole second line
+	} {
+		if got := stripANSI(renderWithSelection(text, span[0], span[1])); got != text {
+			t.Errorf("selection %v corrupted the text: %q", span, got)
+		}
+	}
+}
+
+func TestDragSelectCopiesResponse(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.hasResp = true
+	m.respText = "abcdefghij\nklmno"
+	m.vp.SetContent(m.currentResponseText())
+
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	contentX := rightX + l.reqInnerW + borderOverhead + l.gap + 2
+	vpTopY := topBarH + 1 + 2
+
+	press := tea.MouseMsg{X: contentX, Y: vpTopY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	md, _ := m.Update(press)
+	m = md.(Model)
+	if !m.selecting {
+		t.Fatal("press over the response body should start selecting")
+	}
+
+	drag := tea.MouseMsg{X: contentX + 5, Y: vpTopY, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion}
+	mg, _ := m.Update(drag)
+	m = mg.(Model)
+	if !m.selDragged {
+		t.Fatal("motion should mark the selection as a drag")
+	}
+	if got := selectedText(m.currentResponseText(), m.selAnchor, m.selCursor); got != "abcde" {
+		t.Errorf("drag selection = %q, want abcde", got)
+	}
+
+	up := tea.MouseMsg{X: contentX + 5, Y: vpTopY, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
+	mu, _ := m.Update(up)
+	m = mu.(Model)
+	if m.selecting {
+		t.Error("release should end the selection")
+	}
+	// Either the copy succeeded or the clipboard was unavailable — both leave a
+	// status message, proving the copy path ran on a non-empty selection.
+	if !strings.Contains(m.statusMsg, "copied") && !strings.Contains(m.statusMsg, "clipboard") {
+		t.Errorf("release after a drag should report a copy result, got %q", m.statusMsg)
+	}
+}
+
+func TestMouseWheelIgnoredOutsideResponse(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.hasResp = true
+	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	// A point over the request pane (left of the response pane) must not scroll.
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	reqX, y := rightX+2, topBarH+2
+	got, _ := m.Update(wheelAt(reqX, y, tea.MouseButtonWheelDown))
+	if got.(Model).vp.YOffset != 0 {
+		t.Errorf("wheel over the request pane must not scroll the response, YOffset=%d", got.(Model).vp.YOffset)
 	}
 }
 

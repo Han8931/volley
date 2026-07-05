@@ -19,7 +19,8 @@ var helpSections = []struct {
 		{"q / :q", "quit (prompts if unsaved)"},
 	}},
 	{"Method pane", [][2]string{
-		{"j / k  ·  ↑ / ↓", "cycle the HTTP method"},
+		{"r", "change the HTTP method"},
+		{"j / k  ·  ↑ / ↓", "cycle either direction"},
 		{"tab / ^w", "reach it from the URL bar"},
 	}},
 	{"URL bar (types directly)", [][2]string{

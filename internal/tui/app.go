@@ -3,11 +3,13 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -96,6 +98,19 @@ type Model struct {
 
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
 	pendingComma  bool // for leader-style commands, currently ",n" tree toggle
+
+	// Double-click tracking for the collections tree: a second click on the same
+	// row within doubleClickWindow opens (a file) or toggles (a folder).
+	lastTreeClickRow int
+	lastTreeClick    time.Time
+
+	// Drag-to-select in the response viewport. selecting is true between a left
+	// press and release over the response body; selDragged distinguishes a drag
+	// (selection) from a plain click. Positions index the response text.
+	selecting  bool
+	selDragged bool
+	selAnchor  textPos
+	selCursor  textPos
 
 	// command line (":" commands and "/" search)
 	cmd       textinput.Model
@@ -238,8 +253,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.sendButtonClicked(msg) {
-			return m.send()
+		switch {
+		case msg.Action == tea.MouseActionPress &&
+			(msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown):
+			return m.handleScroll(msg)
+		case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+			return m.handleMouseDown(msg)
+		case msg.Action == tea.MouseActionMotion && m.selecting:
+			return m.handleMouseDrag(msg)
+		case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionRelease:
+			return m.handleMouseUp(msg)
 		}
 		return m, nil
 
@@ -443,12 +466,13 @@ func (m Model) beginEditTimeout() Model {
 }
 
 // updateMethodNormal handles keys while the standalone method selector is
-// focused: j/k (or ↓/↑) cycle the HTTP method. Pane moves are tab / ctrl+w.
+// focused: r (Vim-style "replace") advances the HTTP method; j/k (or ↓/↑) cycle
+// either way. Pane moves are tab / ctrl+w.
 func (m Model) updateMethodNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "j", " ":
+	case "r", "j", " ":
 		return m.cycleMethod(1), nil
-	case "k":
+	case "R", "k":
 		return m.cycleMethod(-1), nil
 	}
 	return m, nil
@@ -613,6 +637,333 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "" // ignore stray keys quietly
 	}
 	return m, nil
+}
+
+// topBarH is the height (rows) of the method/URL top bar: a content row between
+// the pane's top and bottom borders. The request/response panes start below it.
+const topBarH = 3
+
+// collectionsHeaderRows is the number of non-tree lines the collections pane
+// renders before its first item (the "COLLECTIONS" title + the "root:" line).
+const collectionsHeaderRows = 2
+
+// mouseScrollLines is how many lines one wheel notch scrolls the response body.
+const mouseScrollLines = 3
+
+// handleScroll scrolls the response viewport when the wheel turns over the
+// response pane. It leaves focus untouched — scrolling shouldn't steal it.
+func (m Model) handleScroll(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.hasResp || !m.overResponsePane(msg.X, msg.Y) {
+		return m, nil
+	}
+	if msg.Button == tea.MouseButtonWheelUp {
+		m.vp.LineUp(mouseScrollLines)
+	} else {
+		m.vp.LineDown(mouseScrollLines)
+	}
+	return m, nil
+}
+
+// overResponsePane reports whether (x,y) falls inside the response pane's box.
+func (m Model) overResponsePane(x, y int) bool {
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	if y < topBarH { // top method/URL bar, never the response pane
+		return false
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	return x >= respX && x < respX+l.respInnerW+borderOverhead
+}
+
+// textPos is a position in the response text: a 0-based line and rune column.
+type textPos struct{ line, col int }
+
+// selectionStyle reverses the selected span so it reads as a highlight.
+var selectionStyle = lipgloss.NewStyle().Reverse(true)
+
+// responseTextPos maps a screen coordinate to a position in the response text,
+// accounting for the viewport's vertical scroll. It returns ok=false when the
+// point isn't over the scrollable body (e.g. the status line or tab bar).
+func (m Model) responseTextPos(x, y int) (textPos, bool) {
+	if !m.overResponsePane(x, y) {
+		return textPos{}, false
+	}
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	contentX := respX + 2     // pane border + padding
+	vpTopY := topBarH + 1 + 2 // pane top border + status line + tab bar
+	if y < vpTopY {
+		return textPos{}, false
+	}
+	line := m.vp.YOffset + (y - vpTopY)
+	col := x - contentX
+	if line < 0 {
+		line = 0
+	}
+	if col < 0 {
+		col = 0
+	}
+	return textPos{line: line, col: col}, true
+}
+
+// handleMouseDown begins a text selection when the press lands on the response
+// body. Elsewhere it is a no-op; the click resolves on release.
+func (m Model) handleMouseDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.hasResp {
+		return m, nil
+	}
+	pos, ok := m.responseTextPos(msg.X, msg.Y)
+	if !ok {
+		return m, nil
+	}
+	m.selecting = true
+	m.selDragged = false
+	m.selAnchor = pos
+	m.selCursor = pos
+	return m, nil
+}
+
+// handleMouseDrag extends the in-progress selection and repaints the highlight.
+func (m Model) handleMouseDrag(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	pos, ok := m.responseTextPos(msg.X, msg.Y)
+	if !ok {
+		return m, nil // dragged off the body; keep the last extent
+	}
+	m.selCursor = pos
+	m.selDragged = true
+	m.vp.SetContent(renderWithSelection(m.currentResponseText(), m.selAnchor, m.selCursor))
+	return m, nil
+}
+
+// handleMouseUp finalizes a selection: a real drag copies the span to the
+// clipboard; a plain click (no drag) falls through to normal click routing.
+func (m Model) handleMouseUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.selecting {
+		return m.handleClick(msg)
+	}
+	m.selecting = false
+	m.vp.SetContent(m.currentResponseText()) // drop the highlight either way
+	if !m.selDragged {
+		return m.handleClick(msg) // it was a click, not a drag
+	}
+	sel := selectedText(m.currentResponseText(), m.selAnchor, m.selCursor)
+	if sel == "" {
+		return m, nil
+	}
+	if err := clipboard.WriteAll(sel); err != nil {
+		m.statusMsg = "clipboard unavailable"
+	} else {
+		m.statusMsg = fmt.Sprintf("copied %d chars to clipboard", len([]rune(sel)))
+	}
+	return m, nil
+}
+
+// orderSelection returns a,b so that a is not after b.
+func orderSelection(a, b textPos) (textPos, textPos) {
+	if b.line < a.line || (b.line == a.line && b.col < a.col) {
+		return b, a
+	}
+	return a, b
+}
+
+// renderWithSelection returns text with the [a,b] span reverse-video highlighted.
+func renderWithSelection(text string, a, b textPos) string {
+	a, b = orderSelection(a, b)
+	lines := strings.Split(text, "\n")
+	for i := a.line; i <= b.line && i < len(lines); i++ {
+		if i < 0 {
+			continue
+		}
+		r := []rune(lines[i])
+		lo, hi := 0, len(r)
+		if i == a.line {
+			lo = clampInt(a.col, 0, len(r))
+		}
+		if i == b.line {
+			hi = clampInt(b.col, 0, len(r))
+		}
+		if lo >= hi {
+			continue
+		}
+		lines[i] = string(r[:lo]) + selectionStyle.Render(string(r[lo:hi])) + string(r[hi:])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// selectedText extracts the plain text covered by the [a,b] span.
+func selectedText(text string, a, b textPos) string {
+	a, b = orderSelection(a, b)
+	lines := strings.Split(text, "\n")
+	var out []string
+	for i := a.line; i <= b.line && i < len(lines); i++ {
+		if i < 0 {
+			continue
+		}
+		r := []rune(lines[i])
+		lo, hi := 0, len(r)
+		if i == a.line {
+			lo = clampInt(a.col, 0, len(r))
+		}
+		if i == b.line {
+			hi = clampInt(b.col, 0, len(r))
+		}
+		if lo > hi {
+			lo = hi
+		}
+		out = append(out, string(r[lo:hi]))
+	}
+	return strings.Join(out, "\n")
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// handleClick routes a left button release to the pane under the pointer: it
+// focuses that pane and runs a pane-specific action — cycle the method, place
+// the URL caret, switch a request tab, or move the tree selection. Sending
+// stays on the SEND button (and :send); the button takes precedence here.
+func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
+		return m, nil
+	}
+	// Don't let clicks reach the panes while a modal/prompt owns the screen.
+	if m.showHelp || m.cmdActive || m.collectionMenu ||
+		m.pendingAction != pendingNone || m.confirmDelete != "" {
+		return m, nil
+	}
+	if m.sendButtonClicked(msg) {
+		return m.send()
+	}
+
+	l := m.computeLayout()
+	x, y := msg.X, msg.Y
+
+	rightX := 0 // left border column of the right-hand region (method/url/req/resp)
+	if m.collectionShown {
+		collW := l.collectionInnerW + borderOverhead
+		if x < collW {
+			if y <= l.collectionInnerH+1 {
+				return m.clickCollections(y)
+			}
+			return m, nil
+		}
+		rightX = collW + l.gap
+	}
+
+	if y < topBarH { // method / URL top bar
+		methodEnd := rightX + l.methodInnerW + borderOverhead
+		if x >= rightX && x < methodEnd {
+			return m.setFocus(focusMethod).cycleMethod(1), nil
+		}
+		urlX := methodEnd + l.gap
+		if x >= urlX && x < urlX+l.urlInnerW+borderOverhead {
+			return m.clickURL(x, urlX, l), nil
+		}
+		return m, nil
+	}
+
+	// Body row: request pane on the left, response on the right.
+	reqEnd := rightX + l.reqInnerW + borderOverhead
+	if x >= rightX && x < reqEnd {
+		return m.clickRequest(x, y, rightX), nil
+	}
+	respX := reqEnd + l.gap
+	if x >= respX && x < respX+l.respInnerW+borderOverhead {
+		return m.setFocus(focusResponse), nil
+	}
+	return m, nil
+}
+
+// doubleClickWindow is how close two clicks on the same tree row must be to
+// count as a double-click.
+const doubleClickWindow = 500 * time.Millisecond
+
+// clickCollections focuses the tree and moves the selection to the clicked row.
+// A single click only selects; a second click on the same row within
+// doubleClickWindow opens it (a request) or toggles it (a folder), reusing the
+// same path as pressing Enter.
+func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
+	m = m.setFocus(focusCollection)
+	row := y - (1 + collectionsHeaderRows) // top border + header lines
+	if row < 0 {
+		return m, nil
+	}
+	if rows := m.collectionPane.rows(); row >= len(rows) {
+		return m, nil
+	}
+	double := row == m.lastTreeClickRow && !m.lastTreeClick.IsZero() &&
+		time.Since(m.lastTreeClick) <= doubleClickWindow
+	m.collectionPane.cursor = row
+	m.lastTreeClickRow = row
+	m.lastTreeClick = time.Now()
+	if double {
+		m.lastTreeClick = time.Time{} // consume, so a triple-click doesn't re-fire
+		if m.collectionPane.updateNormal(tea.KeyMsg{Type: tea.KeyEnter}) == "open" {
+			if it, ok := m.collectionPane.selected(); ok {
+				return m.guardedOpen(it.Name)
+			}
+		}
+	}
+	return m, nil
+}
+
+// clickURL focuses the URL bar (Insert) and places the caret at the clicked
+// column, accounting for the horizontal scroll that was in effect when clicked.
+func (m Model) clickURL(x, urlX int, l layout) Model {
+	width := urlInputWidth(l)
+	start := 0 // the scroll offset the user saw: 0 unless it was focused & scrolled
+	if m.focus == focusURL {
+		if _, col := m.url.Cursor(); width > 0 && col >= width {
+			start = col - width + 1
+		}
+	}
+	m = m.setFocus(focusURL)
+	clicked := x - (urlX + borderOverhead) // text begins after the border + padding
+	if clicked < 0 {
+		clicked = 0
+	}
+	m.url.SetCursorCol(start + clicked)
+	return m
+}
+
+// clickRequest focuses the request pane and, when the click lands on the tab
+// bar row, switches to the clicked tab.
+func (m Model) clickRequest(x, y, rightX int) Model {
+	m = m.setFocus(focusRequest)
+	if y == topBarH+1 { // tab bar is the first content row (below the pane's border)
+		if tab, ok := requestTabAt(x, rightX+borderOverhead); ok {
+			m.reqPane.selectTab(tab)
+		}
+	}
+	return m
+}
+
+// requestTabAt maps a screen column to a request-tab index. Tab cells render as
+// " name " left-to-right from contentX; a click past the last tab returns false.
+func requestTabAt(x, contentX int) (int, bool) {
+	col := contentX
+	for i, name := range tabNames {
+		cellW := len(name) + 2 // one padding space on each side
+		if x >= col && x < col+cellW {
+			return i, true
+		}
+		col += cellW
+	}
+	return 0, false
 }
 
 func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
