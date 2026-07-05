@@ -208,6 +208,8 @@ func (p *collectionPane) updateNormal(msg tea.KeyMsg) (action string) {
 		if p.cursor < len(rows)-1 {
 			p.cursor++
 		}
+	case "T":
+		return "open-tabs"
 	case "R": // reload from disk
 		return "refresh"
 	case "d":
@@ -217,6 +219,24 @@ func (p *collectionPane) updateNormal(msg tea.KeyMsg) (action string) {
 		p.pendD = true
 	}
 	return ""
+}
+
+// markedRequests returns marked request names in visible tree order. If nothing
+// is marked, it falls back to the request under the cursor.
+func (p collectionPane) markedRequests() []string {
+	var names []string
+	if len(p.marked) > 0 {
+		for _, row := range p.rows() {
+			if row.file && p.marked[row.name] {
+				names = append(names, row.name)
+			}
+		}
+		return names
+	}
+	if row, ok := p.current(); ok && row.file {
+		return []string{row.name}
+	}
+	return nil
 }
 
 // setExpandedRecursive opens/closes a folder and all of its descendants.

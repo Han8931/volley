@@ -192,10 +192,15 @@ func (m Model) viewMain(l layout) string {
 		strings.Repeat(" ", l.gap),
 		m.viewURLBar(l),
 	)
-	right := lipgloss.JoinVertical(lipgloss.Left,
-		topBar,
-		m.viewBody(l),
-	)
+	// When the tree is shown, lead the right column with a blank row matching the
+	// tree's top border, so the tabline lines up with the tree's first content
+	// row (COLLECTIONS) and the tree border stays the topmost element.
+	rightParts := make([]string, 0, 4)
+	if m.collectionShown {
+		rightParts = append(rightParts, "")
+	}
+	rightParts = append(rightParts, m.viewOpenTabs(l), topBar, m.viewBody(l))
+	right := lipgloss.JoinVertical(lipgloss.Left, rightParts...)
 	if !m.collectionShown {
 		return right
 	}
@@ -203,6 +208,68 @@ func (m Model) viewMain(l layout) string {
 		Render(m.collectionPane.view())
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		collections, strings.Repeat(" ", l.gap), right)
+}
+
+const (
+	openTabLabelMaxW = 18
+	// openTabGap is the blank cells rendered between adjacent tabs. openTabHit
+	// (mouse hit-testing) advances by the same amount, so the two must agree.
+	openTabGap = 1
+	// openTabCloseGlyph is the per-tab close button. It occupies the two trailing
+	// cells of a tab (the glyph plus one pad), which openTabHit treats as the
+	// close hot-zone; clicking anywhere else on the tab switches to it.
+	openTabCloseGlyph = "✕"
+	openTabCloseZone  = 2
+)
+
+// openTabLabel is the on-screen text of a single tab: the (truncated) name with
+// a trailing close button, padded one cell each side. Shared by the renderer and
+// the click hit-tester so their widths never drift.
+func openTabLabel(name string) string {
+	return " " + truncateMiddle(name, openTabLabelMaxW) + " " + openTabCloseGlyph + " "
+}
+
+// viewOpenTabs renders the tree-opened request tabs as a tabline at the top of
+// the right-hand column, beside the tree — like Bruno/Postman's tab strip. The
+// bar has a solid fill so it reads as a distinct strip; the active tab is a
+// bright accent block and inactive tabs are lighter gray blocks separated by a
+// gap, so every tab is legible even on a black terminal. The strip is always
+// present (a dim hint when no tabs are open) so the layout never shifts.
+func (m Model) viewOpenTabs(l layout) string {
+	width := l.methodInnerW + borderOverhead + l.gap + l.urlInnerW + borderOverhead
+	if width < 1 {
+		width = 1
+	}
+	fill := lipgloss.NewStyle().Background(colSel)
+
+	if len(m.openTabs) == 0 {
+		hint := " no open tabs — mark requests in the tree, then press T "
+		return fill.Foreground(colDim).Width(width).MaxWidth(width).Render(hint)
+	}
+
+	active := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(colAccent).Bold(true)
+	idle := lipgloss.NewStyle().Foreground(colFg).Background(colMarked)
+	sep := fill.Render(strings.Repeat(" ", openTabGap))
+
+	var b strings.Builder
+	used := 0
+	for i, name := range m.openTabs {
+		if i > 0 {
+			b.WriteString(sep)
+			used += openTabGap
+		}
+		st := idle
+		if i == m.activeTab {
+			st = active
+		}
+		label := openTabLabel(name)
+		b.WriteString(st.Render(label))
+		used += lipgloss.Width(label)
+	}
+	if used < width { // pad the rest of the strip so the bar spans the full width
+		b.WriteString(fill.Render(strings.Repeat(" ", width-used)))
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(b.String())
 }
 
 func (m Model) viewBody(l layout) string {
@@ -352,6 +419,9 @@ func (m Model) docNameSeg() string {
 		name, nameStyle = "[No Name]", lipgloss.NewStyle().Foreground(colDim)
 	}
 	seg := nameStyle.Render(" " + truncateMiddle(name, docNameMaxW))
+	if len(m.openTabs) > 0 {
+		seg += lipgloss.NewStyle().Foreground(colAccent).Render(fmt.Sprintf(" [%d/%d]", m.activeTab+1, len(m.openTabs)))
+	}
 	if m.dirty() {
 		seg += lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(" [+]")
 	}

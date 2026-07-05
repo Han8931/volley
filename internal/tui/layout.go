@@ -104,13 +104,15 @@ func (m Model) computeLayout() layout {
 	reqW := bodyAvail / 2
 	respW := bodyAvail - reqW
 
-	// Vertical layout: collections spans from the top to the status bar.
-	// Right side uses a 3-row URL/method bar above request/response.
+	// Vertical layout: the collections tree spans the full height from the top to
+	// the status bar. The right-hand column leads with a blank row (aligning with
+	// the tree's top border) then the tabline, the 3-row URL/method bar, and the
+	// request/response panes — so bodyTopY already accounts for the tab strip.
 	collectionH := m.height - 1 - borderOverhead
 	if collectionH < 1 {
 		collectionH = 1
 	}
-	bodyH := m.height - 1 - 3 - borderOverhead
+	bodyH := m.height - 1 - m.bodyTopY() - borderOverhead
 	if bodyH < 6 {
 		bodyH = 6
 	}

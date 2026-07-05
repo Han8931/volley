@@ -211,6 +211,47 @@ func TestSpaceMarksRequestAndMovesCursorDown(t *testing.T) {
 	}
 }
 
+func TestTOpensMarkedRequestsAsTabs(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusCollection)
+	m.collectionStore = collections.Store{Root: t.TempDir()}
+	if err := m.collectionStore.Save("a", model.Request{Method: "GET", URL: "https://a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.collectionStore.Save("b", model.Request{Method: "POST", URL: "https://b.test"}); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshCollections()
+	m.collectionPane.marked["a"] = true
+	m.collectionPane.marked["b"] = true
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = next.(Model)
+	if len(m.openTabs) != 2 || m.openTabs[0] != "a" || m.openTabs[1] != "b" {
+		t.Fatalf("openTabs = %#v, want [a b]", m.openTabs)
+	}
+	if m.currentName != "a" || m.url.Text() != "https://a.test" {
+		t.Fatalf("T should load first opened tab, current=%q url=%q", m.currentName, m.url.Text())
+	}
+	if got := stripANSI(m.docNameSeg()); !strings.Contains(got, "[1/2]") {
+		t.Fatalf("doc segment should show tab count, got %q", got)
+	}
+	tabLine := strings.Split(stripANSI(m.View()), "\n")[m.tablineY()]
+	if !strings.Contains(tabLine, "a") || !strings.Contains(tabLine, "b") {
+		t.Fatalf("request tabs should render on the tabline row, got %q", tabLine)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = next.(Model)
+	if m.activeTab != 1 || m.currentName != "b" {
+		t.Fatalf("L should switch to next tab, active=%d current=%q", m.activeTab, m.currentName)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	m = next.(Model)
+	if m.activeTab != 0 || m.currentName != "a" {
+		t.Fatalf("H should switch to previous tab, active=%d current=%q", m.activeTab, m.currentName)
+	}
+}
+
 func TestCollectionCursorClampedAfterCollapse(t *testing.T) {
 	items := []collections.Item{
 		{Name: "a/one"}, {Name: "a/two"}, {Name: "b/three"},

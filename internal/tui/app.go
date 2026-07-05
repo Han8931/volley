@@ -79,6 +79,8 @@ type Model struct {
 	collectionPref  bool // user's show/hide preference, restored when the window is wide enough
 	collectionWide  bool // NerdTree-style zoom: widen the tree so long request names are visible
 	currentName     string
+	openTabs        []string // saved requests opened as tabs from the tree
+	activeTab       int
 
 	vars    vars.Store
 	timeout time.Duration
@@ -411,11 +413,23 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.setFocus(m.focusRight()), nil
 		case "w":
 			return m.cycleFocus(1), nil
+		case "q":
+			return m.closeActiveTab() // Vim-style: ctrl+w q closes the active tab
 		}
 		return m, nil // anything else cancels the chord
 	}
 
 	switch msg.String() {
+	case "H":
+		// H/L walk the open request tabs from any pane. The request pane's own
+		// Headers/Body/Params sub-tabs stay reachable via [ / ] once tabs are open.
+		if len(m.openTabs) > 0 {
+			return m.switchOpenTab(-1)
+		}
+	case "L":
+		if len(m.openTabs) > 0 {
+			return m.switchOpenTab(1)
+		}
 	case "?":
 		m.showHelp = true
 		return m, nil
@@ -478,11 +492,11 @@ func (m Model) beginEditTimeout() Model {
 // focused: r (Vim-style "replace") advances the HTTP method; j/k (or ↓/↑) cycle
 // either way. Pane moves are tab / ctrl+w.
 func (m Model) updateMethodNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "r", "j", " ":
+	// Only r cycles the HTTP method. j/k, space and the arrow keys are all inert
+	// here so a stray keypress — or terminal wheel-arrow leakage — can't change
+	// the method behind your back.
+	if msg.String() == "r" {
 		return m.cycleMethod(1), nil
-	case "R", "k":
-		return m.cycleMethod(-1), nil
 	}
 	return m, nil
 }
@@ -521,6 +535,8 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "collections tree restored"
 		}
+	case "open-tabs":
+		return m.openCollectionTabs()
 	case "refresh":
 		m.refreshCollections()
 		m.statusMsg = "reloaded collections"
@@ -657,8 +673,31 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // topBarH is the height (rows) of the method/URL top bar: a content row between
-// the pane's top and bottom borders. The request/response panes start below it.
+// the pane's top and bottom borders.
 const topBarH = 3
+
+// tabBarH is the height of the tabline: a strip at the top of the right-hand
+// column. The space is always reserved (even with no tabs open) so the layout
+// never shifts when tabs appear or disappear.
+func (m Model) tabBarH() int { return 1 }
+
+// tablineTopGap is the blank row the right column reserves above the tabline
+// when the tree is shown, so the tabline lines up with the tree's first content
+// row (COLLECTIONS) and the tree's top border stays the clean topmost element.
+func (m Model) tablineTopGap() int {
+	if m.collectionShown {
+		return 1
+	}
+	return 0
+}
+
+// tablineY / topBarY / bodyTopY are the top rows of the tabline, the method/URL
+// bar, and the request/response body — all measured from the very top row.
+func (m Model) tablineY() int { return m.tablineTopGap() }
+
+func (m Model) topBarY() int { return m.tablineY() + m.tabBarH() }
+
+func (m Model) bodyTopY() int { return m.topBarY() + topBarH }
 
 // collectionsHeaderRows is the number of non-tree lines the collections pane
 // renders before its first item (the "COLLECTIONS" title + the "root:" line).
@@ -701,11 +740,11 @@ func (m Model) overResponsePane(x, y int) bool {
 	if m.collectionShown {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
-	if y < topBarH { // top method/URL bar, never the response pane
+	if y < m.bodyTopY() { // top method/URL bar or request-tabs row, never the response pane
 		return false
 	}
 	respX := rightX + l.reqInnerW + borderOverhead + l.gap
-	respBottom := topBarH + l.respInnerH + borderOverhead
+	respBottom := m.bodyTopY() + l.respInnerH + borderOverhead
 	return y < respBottom && x >= respX && x < respX+l.respInnerW+borderOverhead
 }
 
@@ -728,8 +767,8 @@ func (m Model) responseTextPos(x, y int) (textPos, bool) {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
 	respX := rightX + l.reqInnerW + borderOverhead + l.gap
-	contentX := respX + 2     // pane border + padding
-	vpTopY := topBarH + 1 + 1 // pane top border + combined tab/status header row
+	contentX := respX + 2          // pane border + padding
+	vpTopY := m.bodyTopY() + 1 + 1 // pane top border + combined tab/status header row
 	if y < vpTopY {
 		return textPos{}, false
 	}
@@ -883,7 +922,7 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	l := m.computeLayout()
 	x, y := msg.X, msg.Y
 
-	rightX := 0 // left border column of the right-hand region (method/url/req/resp)
+	rightX := 0 // left border column of the right-hand region (tabline/method/url/req/resp)
 	if m.collectionShown {
 		collW := l.collectionInnerW + borderOverhead
 		if x < collW {
@@ -895,7 +934,11 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		rightX = collW + l.gap
 	}
 
-	if y < topBarH { // method / URL top bar
+	if y == m.tablineY() { // tabline row (below the tree's top border)
+		return m.clickOpenTab(x, rightX)
+	}
+
+	if y >= m.topBarY() && y < m.bodyTopY() { // method / URL top bar
 		methodEnd := rightX + l.methodInnerW + borderOverhead
 		if x >= rightX && x < methodEnd {
 			return m.setFocus(focusMethod).cycleMethod(1), nil
@@ -904,6 +947,10 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if x >= urlX && x < urlX+l.urlInnerW+borderOverhead {
 			return m.clickURL(x, urlX, l), nil
 		}
+		return m, nil
+	}
+
+	if y < m.bodyTopY() { // blank row above the tabline — nothing to click
 		return m, nil
 	}
 
@@ -952,6 +999,58 @@ func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// clickOpenTab handles a click on the tabline: the trailing ✕ closes that tab,
+// anywhere else on it switches to it. The tabline starts at the left edge of the
+// right-hand column, so hit-testing begins at rightX.
+func (m Model) clickOpenTab(x, rightX int) (tea.Model, tea.Cmd) {
+	idx, onClose, ok := openTabHit(x, rightX, m.openTabs)
+	if !ok {
+		return m, nil
+	}
+	if onClose {
+		return m.closeTabAt(idx)
+	}
+	return m.switchOpenTabTo(idx)
+}
+
+func (m Model) switchOpenTab(delta int) (tea.Model, tea.Cmd) {
+	if len(m.openTabs) == 0 {
+		return m, nil
+	}
+	idx := (m.activeTab + delta + len(m.openTabs)) % len(m.openTabs)
+	return m.switchOpenTabTo(idx)
+}
+
+func (m Model) switchOpenTabTo(idx int) (tea.Model, tea.Cmd) {
+	if idx < 0 || idx >= len(m.openTabs) || idx == m.activeTab {
+		return m, nil
+	}
+	if m.dirty() {
+		m.statusMsg = "save or discard current edits before switching tabs"
+		return m, nil
+	}
+	m.activeTab = idx
+	m = m.loadSavedRequest(m.openTabs[idx])
+	return m, nil
+}
+
+// openTabHit maps a click column to a tab. onClose reports whether the click
+// landed on that tab's trailing ✕ close button (its last openTabCloseZone cells).
+func openTabHit(x, startX int, tabs []string) (idx int, onClose bool, ok bool) {
+	col := startX
+	for i, name := range tabs {
+		if i > 0 {
+			col += openTabGap
+		}
+		cellW := lipgloss.Width(openTabLabel(name))
+		if x >= col && x < col+cellW {
+			return i, x >= col+cellW-openTabCloseZone, true
+		}
+		col += cellW
+	}
+	return 0, false, false
+}
+
 // clickURL focuses the URL bar (Insert) and places the caret at the clicked
 // column, accounting for the horizontal scroll that was in effect when clicked.
 func (m Model) clickURL(x, urlX int, l layout) Model {
@@ -975,7 +1074,7 @@ func (m Model) clickURL(x, urlX int, l layout) Model {
 // bar row, switches to the clicked tab.
 func (m Model) clickRequest(x, y, rightX int) Model {
 	m = m.setFocus(focusRequest)
-	if y == topBarH+1 { // tab bar is the first content row (below the pane's border)
+	if y == m.bodyTopY()+1 { // tab bar is the first content row (below the pane's border)
 		if tab, ok := requestTabAt(x, rightX+borderOverhead); ok {
 			m.reqPane.selectTab(tab)
 		}
@@ -1010,7 +1109,7 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	// so the SEND button (right-aligned inside the URL pane) is offset by it.
 	urlPaneX := paneX + l.methodInnerW + borderOverhead + l.gap
 	buttonW := lipgloss.Width(m.sendButtonView())
-	buttonY := 1 // URL pane content row, below the top border.
+	buttonY := m.topBarY() + 1 // URL pane content row, below the top border.
 	buttonStartX := urlPaneX + l.urlInnerW - buttonW
 	buttonEndX := urlPaneX + l.urlInnerW - 1
 	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX

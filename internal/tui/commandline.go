@@ -225,6 +225,20 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 				m.statusMsg = "timeout set to " + d.String()
 			}
 		}
+	case "tabnew", "tabe", "tabedit":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :tabnew <saved request>"
+			return m, nil
+		}
+		return m.openTabByName(strings.Join(fields[1:], " "))
+	case "tabclose", "tabc":
+		return m.closeActiveTab()
+	case "tabonly", "tabo":
+		return m.closeOtherTabs()
+	case "tabnext", "tabn":
+		return m.switchOpenTab(1)
+	case "tabprevious", "tabprev", "tabp", "tabN":
+		return m.switchOpenTab(-1)
 	case "help", "h":
 		m.showHelp = true
 	default:
@@ -378,6 +392,140 @@ func (m Model) loadSavedRequest(name string) Model {
 	m.currentName = name
 	m.statusMsg = "opened " + name
 	return m
+}
+
+// openCollectionTabs opens the marked tree requests (or the current request when
+// nothing is marked) as tabs. Newly-selected requests are appended to the open
+// set — deduped — so tabs build up across presses rather than replacing each
+// other, and opening never blocks on unsaved edits (the editor just loads the
+// tab's on-disk request).
+func (m Model) openCollectionTabs() (tea.Model, tea.Cmd) {
+	names := m.collectionPane.markedRequests()
+	if len(names) == 0 {
+		m.statusMsg = "mark requests with space, or place cursor on a request, then press T"
+		return m, nil
+	}
+
+	open := make(map[string]bool, len(m.openTabs))
+	for _, t := range m.openTabs {
+		open[t] = true
+	}
+	tabs := append([]string(nil), m.openTabs...)
+	added, firstNew := 0, -1
+	for _, n := range names {
+		if open[n] {
+			continue
+		}
+		open[n] = true
+		if firstNew < 0 {
+			firstNew = len(tabs)
+		}
+		tabs = append(tabs, n)
+		added++
+	}
+	m.openTabs = tabs
+
+	// Focus the first newly-opened tab; if every selection was already open, jump
+	// to the first one named so T still takes you there.
+	target := firstNew
+	if target < 0 {
+		target = indexOf(m.openTabs, names[0])
+	}
+	m.activeTab = target
+	m = m.loadSavedRequest(m.openTabs[target])
+	switch {
+	case added == 0:
+		m.statusMsg = "switched to " + m.openTabs[target]
+	case added == 1:
+		m.statusMsg = "opened tab " + m.openTabs[target]
+	default:
+		m.statusMsg = fmt.Sprintf("opened %d tabs", added)
+	}
+	return m, nil
+}
+
+// indexOf returns the position of name in tabs, or 0 when absent.
+func indexOf(tabs []string, name string) int {
+	for i, t := range tabs {
+		if t == name {
+			return i
+		}
+	}
+	return 0
+}
+
+// openTabByName opens a saved request as a tab (switching to it if already
+// open) and loads it into the editor — the :tabnew entry point.
+func (m Model) openTabByName(name string) (tea.Model, tea.Cmd) {
+	for i, t := range m.openTabs {
+		if t == name {
+			return m.switchOpenTabTo(i)
+		}
+	}
+	if _, err := m.collectionStore.Load(name); err != nil {
+		m.statusMsg = "no saved request named " + name
+		return m, nil
+	}
+	m.openTabs = append(append([]string(nil), m.openTabs...), name)
+	m.activeTab = len(m.openTabs) - 1
+	m = m.loadSavedRequest(name)
+	m.statusMsg = "opened tab " + name
+	return m, nil
+}
+
+// closeActiveTab drops the current tab and loads its neighbour.
+func (m Model) closeActiveTab() (tea.Model, tea.Cmd) {
+	if len(m.openTabs) == 0 {
+		m.statusMsg = "no open tabs"
+		return m, nil
+	}
+	return m.closeTabAt(m.activeTab)
+}
+
+// closeTabAt removes tab idx. Closing the active tab loads its neighbour and so
+// discards unsaved edits — that case is blocked until you save or discard.
+// Closing any other tab keeps the current editor (and its edits) untouched, just
+// shifting the active index, so mouse-closing a background tab is always safe.
+func (m Model) closeTabAt(idx int) (tea.Model, tea.Cmd) {
+	if idx < 0 || idx >= len(m.openTabs) {
+		return m, nil
+	}
+	closingActive := idx == m.activeTab
+	if closingActive && m.dirty() {
+		m.statusMsg = "save or discard current edits before closing the tab"
+		return m, nil
+	}
+	tabs := append([]string(nil), m.openTabs[:idx]...)
+	tabs = append(tabs, m.openTabs[idx+1:]...)
+	m.openTabs = tabs
+	if len(m.openTabs) == 0 {
+		m.activeTab = 0
+		m.statusMsg = "closed tab"
+		return m, nil
+	}
+	switch {
+	case idx < m.activeTab:
+		m.activeTab-- // the active tab shifted left; its editor stays as-is
+	case closingActive:
+		if m.activeTab >= len(m.openTabs) {
+			m.activeTab = len(m.openTabs) - 1
+		}
+		m = m.loadSavedRequest(m.openTabs[m.activeTab]) // load the neighbour
+	}
+	m.statusMsg = "closed tab"
+	return m, nil
+}
+
+// closeOtherTabs keeps only the active tab (Vim's :tabonly).
+func (m Model) closeOtherTabs() (tea.Model, tea.Cmd) {
+	if len(m.openTabs) <= 1 {
+		m.statusMsg = "no other tabs"
+		return m, nil
+	}
+	m.openTabs = []string{m.openTabs[m.activeTab]}
+	m.activeTab = 0
+	m.statusMsg = "closed other tabs"
+	return m, nil
 }
 
 func (m *Model) refreshCollections() {

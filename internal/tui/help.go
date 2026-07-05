@@ -18,9 +18,14 @@ var helpSections = []struct {
 		{",n", "show / hide collections tree"},
 		{"q / :q", "quit (prompts if unsaved)"},
 	}},
+	{"Tabs (open saved requests)", [][2]string{
+		{"T (in tree)", "open marked requests (or the one under the cursor) as tabs — adds to the open set"},
+		{"H / L  ·  click", "switch to the previous / next tab"},
+		{"click ✕  ·  ctrl+w q", "close a tab with the mouse  ·  close the active tab"},
+		{":tabnew <name>  ·  :tabonly", "open a saved request in a tab  ·  close all others"},
+	}},
 	{"Method pane", [][2]string{
-		{"r", "change the HTTP method"},
-		{"j / k  ·  ↑ / ↓", "cycle either direction"},
+		{"r", "cycle the HTTP method (the only key that changes it)"},
 		{"tab / ^w", "reach it from the URL bar"},
 	}},
 	{"URL bar (types directly)", [][2]string{
@@ -34,6 +39,7 @@ var helpSections = []struct {
 		{"o / enter / l", "open request or toggle group"},
 		{"O / X  ·  A", "expand/collapse recursively  ·  widen tree"},
 		{"space", "mark/unmark request, then move down"},
+		{"T", "open marked requests as tabs"},
 		{"h  ·  p", "collapse group / jump to parent"},
 		{"x", "close parent group"},
 		{",n  ·  R", "show / hide tree  ·  reload from disk"},
@@ -42,7 +48,7 @@ var helpSections = []struct {
 		{"m d  ·  dd", "delete request or group (with confirm)"},
 	}},
 	{"Request pane", [][2]string{
-		{"H / L  ·  [ / ]", "switch tab (Headers·Body·Params)"},
+		{"[ ]  ·  H / L", "switch tab (Headers·Body·Params; H/L when no open tabs)"},
 		{"j / k  ·  gg / G", "move rows  ·  first / last row"},
 		{"h/l  0/$  b/w", "key / value cell"},
 		{"i/a/enter", "edit current cell"},
@@ -58,7 +64,7 @@ var helpSections = []struct {
 		{"u  ctrl+r  ·  p P", "undo / redo  ·  paste"},
 	}},
 	{"Response pane", [][2]string{
-		{"[ / ]", "switch Body / Headers tab"},
+		{"[ ]", "switch Body / Headers tab"},
 		{"p", "toggle raw / pretty JSON body"},
 		{"j / k", "scroll  ·  gg / G top / bottom"},
 		{"ctrl+d / ctrl+u", "half-page scroll"},

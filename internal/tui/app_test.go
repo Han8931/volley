@@ -156,10 +156,11 @@ func TestMethodPaneRKeyCyclesMethod(t *testing.T) {
 	if m.req.Method != "PUT" {
 		t.Errorf("after rr: method = %q, want PUT", m.req.Method)
 	}
-	// 'R' steps back.
-	m = step(m, runes("R"))
-	if m.req.Method != "POST" {
-		t.Errorf("after R: method = %q, want POST", m.req.Method)
+	// Only r cycles: R, j/k and space are all inert.
+	for _, k := range []string{"R", "j", "k", " "} {
+		if got := step(m, runes(k)).req.Method; got != "PUT" {
+			t.Errorf("%q must not change the method, got %q", k, got)
+		}
 	}
 }
 
@@ -491,7 +492,7 @@ func responsePanePoint(m Model) (int, int) {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
 	respX := rightX + l.reqInnerW + borderOverhead + l.gap
-	return respX + 2, topBarH + 2
+	return respX + 2, m.bodyTopY() + 2
 }
 
 func TestMouseWheelScrollsResponse(t *testing.T) {
@@ -559,7 +560,7 @@ func TestDragSelectCopiesResponse(t *testing.T) {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
 	contentX := rightX + l.reqInnerW + borderOverhead + l.gap + 2
-	vpTopY := topBarH + 1 + 1
+	vpTopY := m.bodyTopY() + 1 + 1
 
 	press := tea.MouseMsg{X: contentX, Y: vpTopY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	md, _ := m.Update(press)
@@ -638,27 +639,44 @@ func TestMouseWheelIgnoredOutsideResponse(t *testing.T) {
 	if m.collectionShown {
 		rightX = l.collectionInnerW + borderOverhead + l.gap
 	}
-	reqX, y := rightX+2, topBarH+2
+	reqX, y := rightX+2, m.bodyTopY()+2
 	got, _ := m.Update(wheelAt(reqX, y, tea.MouseButtonWheelDown))
 	if got.(Model).vp.YOffset != 0 {
 		t.Errorf("wheel over the request pane must not scroll the response, YOffset=%d", got.(Model).vp.YOffset)
 	}
 }
 
-func TestMouseWheelOverResponseSuppressesSyntheticArrows(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
+// wheelSuppressModel focuses the tree with the cursor mid-list, over a
+// scrollable response. A suppressed vs. real vertical-nav key is then observable
+// as tree-cursor movement — the method pane no longer reacts to j/k/arrows.
+func wheelSuppressModel(t *testing.T) Model {
+	t.Helper()
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.collectionStore = collections.Store{Root: t.TempDir()}
+	for _, n := range []string{"one", "two", "three", "four"} {
+		if err := m.collectionStore.Save(n, model.Request{Method: "GET", URL: "https://x.test"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.refreshCollections()
+	m = m.setFocus(focusCollection)
+	m.collectionPane.cursor = 1 // mid-list: a real up or down key would move it
 	m.hasResp = true
 	m.vp.SetContent(strings.Repeat("body line\n", 200))
-	m.vp.GotoBottom()
+	return m
+}
+
+func TestMouseWheelOverResponseSuppressesSyntheticArrows(t *testing.T) {
+	m := wheelSuppressModel(t)
 	x, y := responsePanePoint(m)
 
 	// Some terminals emit arrow keys after a wheel event, and the count per notch
-	// is terminal-dependent. Even at the bottom of the response, none of those
-	// synthetic Downs may leak into the focused Method pane and cycle GET -> POST.
+	// is terminal-dependent. None of those synthetic Downs may leak into the
+	// focused tree and move its cursor.
 	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
 	m = wm.(Model)
-	if m.methodIdx != 0 {
-		t.Fatalf("wheel itself should not change the focused method pane, methodIdx=%d", m.methodIdx)
+	if m.collectionPane.cursor != 1 {
+		t.Fatalf("wheel itself should not move the tree cursor, cursor=%d", m.collectionPane.cursor)
 	}
 	// Fire more synthetic arrows than mouseScrollLines to prove the suppression
 	// isn't a fixed count that lets the tail leak through.
@@ -666,75 +684,67 @@ func TestMouseWheelOverResponseSuppressesSyntheticArrows(t *testing.T) {
 		km, _ := m.Update(keyDown)
 		m = km.(Model)
 	}
-	if m.methodIdx != 0 {
-		t.Errorf("synthetic Downs after a wheel must all be suppressed, methodIdx=%d", m.methodIdx)
+	if m.collectionPane.cursor != 1 {
+		t.Errorf("synthetic Downs after a wheel must all be suppressed, cursor=%d", m.collectionPane.cursor)
 	}
 }
 
 func TestMouseWheelOverResponseSuppressesOppositeSyntheticArrows(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
-	m.hasResp = true
-	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	m := wheelSuppressModel(t)
 	x, y := responsePanePoint(m)
 
 	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
 	m = wm.(Model)
 	km, _ := m.Update(keyUp)
 	m = km.(Model)
-	if m.methodIdx != 0 {
-		t.Errorf("opposite vertical arrows during a wheel burst must be suppressed, methodIdx=%d", m.methodIdx)
+	if m.collectionPane.cursor != 1 {
+		t.Errorf("opposite vertical arrows during a wheel burst must be suppressed, cursor=%d", m.collectionPane.cursor)
 	}
 }
 
 func TestMouseWheelOverResponseSuppressesSyntheticJK(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
-	m.hasResp = true
-	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	m := wheelSuppressModel(t)
 	x, y := responsePanePoint(m)
 
 	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
 	m = wm.(Model)
 	km, _ := m.Update(runes("j"))
 	m = km.(Model)
-	if m.methodIdx != 0 {
-		t.Errorf("synthetic j during a wheel burst must be suppressed, methodIdx=%d", m.methodIdx)
+	if m.collectionPane.cursor != 1 {
+		t.Errorf("synthetic j during a wheel burst must be suppressed, cursor=%d", m.collectionPane.cursor)
 	}
 }
 
 func TestWheelArrowSuppressionExpires(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
-	m.hasResp = true
-	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	m := wheelSuppressModel(t)
 	x, y := responsePanePoint(m)
 
 	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
 	m = wm.(Model)
-	// Simulate the suppression window having elapsed: a later, intentional Down
-	// press must reach the Method pane and cycle the method.
+	// Simulate the suppression window having elapsed: a later, intentional j
+	// press must reach the tree and move the cursor.
 	m.wheel.armedAt = m.wheel.armedAt.Add(-2 * wheelArrowWindow)
-	km, _ := m.Update(keyDown)
+	km, _ := m.Update(runes("j"))
 	m = km.(Model)
-	if m.methodIdx == 0 {
-		t.Error("a real arrow press after the window should not be suppressed")
+	if m.collectionPane.cursor == 1 {
+		t.Error("a real j press after the window should not be suppressed")
 	}
 }
 
 func TestWheelArrowSuppressionStopsOnOtherKey(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusMethod)
-	m.hasResp = true
-	m.vp.SetContent(strings.Repeat("body line\n", 200))
+	m := wheelSuppressModel(t)
 	x, y := responsePanePoint(m)
 
 	wm, _ := m.Update(wheelAt(x, y, tea.MouseButtonWheelDown))
 	m = wm.(Model)
-	// A non-matching key within the window ends suppression, so a following Down
-	// is treated as a real press.
-	rm, _ := m.Update(runes("r")) // cycles the method itself (GET -> POST)
-	m = rm.(Model)
-	km, _ := m.Update(keyDown)
+	// A non-matching key within the window ends suppression, so a following j is
+	// treated as a real press and moves the cursor.
+	zm, _ := m.Update(runes("z")) // inert in the tree, but ends the wheel window
+	m = zm.(Model)
+	km, _ := m.Update(runes("j"))
 	m = km.(Model)
-	if m.methodIdx == 1 {
-		t.Error("after an intentional key, a later Down should no longer be suppressed")
+	if m.collectionPane.cursor == 1 {
+		t.Error("after an intentional key, a later j should no longer be suppressed")
 	}
 }
 
@@ -780,8 +790,8 @@ func TestManualHideSurvivesResize(t *testing.T) {
 func TestTimeoutReadoutHiddenWhenNarrow(t *testing.T) {
 	topBar := func(v string) string {
 		ls := strings.Split(v, "\n")
-		if len(ls) > 3 {
-			ls = ls[:3]
+		if len(ls) > 5 { // the method/URL bar now sits below the tabline row
+			ls = ls[:5]
 		}
 		return stripANSI(strings.Join(ls, "\n"))
 	}
@@ -1333,27 +1343,21 @@ func TestMethodCycle(t *testing.T) {
 		t.Fatalf("default method = %q", m.req.Method)
 	}
 	// The method is its own pane: reach it (shift+tab from URL, since Method
-	// precedes URL in reading order) and cycle with the down/up arrow keys.
+	// precedes URL in reading order). Only r cycles the method — the arrow keys,
+	// j/k and space are all intentionally inert.
 	m = step(m, keyShiftTab)
 	if m.focus != focusMethod {
 		t.Fatalf("shift+tab from URL: focus = %v, want Method", m.focus)
 	}
-	m = step(m, keyDown) // ↓ == j == next
+	for _, msg := range []tea.KeyMsg{keyDown, keyUp, runes("j"), runes("k"), runes(" ")} {
+		m = step(m, msg)
+		if m.req.Method != "GET" {
+			t.Errorf("%v must not change the method, got %q", msg, m.req.Method)
+		}
+	}
+	m = step(m, runes("r"))
 	if m.req.Method != "POST" {
-		t.Errorf("after ↓, method = %q, want POST", m.req.Method)
-	}
-	m = step(m, keyUp) // ↑ == k == previous
-	if m.req.Method != "GET" {
-		t.Errorf("after ↑, method = %q, want GET", m.req.Method)
-	}
-	// j/k also work directly.
-	m = step(m, runes("j"))
-	if m.req.Method != "POST" {
-		t.Errorf("after j, method = %q, want POST", m.req.Method)
-	}
-	m = step(m, runes("k"))
-	if m.req.Method != "GET" {
-		t.Errorf("after k, method = %q, want GET", m.req.Method)
+		t.Errorf("after r, method = %q, want POST", m.req.Method)
 	}
 }
 
