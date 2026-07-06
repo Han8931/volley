@@ -754,11 +754,11 @@ func (m Model) handleScroll(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Button == tea.MouseButtonWheelUp {
 		if m.hasResp {
-			m.vp.LineUp(mouseScrollLines)
+			m.vp.ScrollUp(mouseScrollLines)
 		}
 	} else {
 		if m.hasResp {
-			m.vp.LineDown(mouseScrollLines)
+			m.vp.ScrollDown(mouseScrollLines)
 		}
 	}
 	m.wheel.Arm()

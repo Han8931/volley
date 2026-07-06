@@ -64,6 +64,7 @@ func (b *Buffer) feedNormal(key string) (release bool) {
 		b.clampNormal()
 	case "g":
 		b.pendingG = true
+		return false // keep any count prefix alive for the second 'g' (Ngg)
 
 	// --- single commands ---
 	case "x":

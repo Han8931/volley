@@ -94,6 +94,8 @@ func logCrash(where string, r interface{}) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "\n=== panic in %s at %s ===\n%v\n\n%s\n",
+	// Best-effort crash log: if this write fails there is nowhere sensible left
+	// to report it, so the error is deliberately dropped.
+	_, _ = fmt.Fprintf(f, "\n=== panic in %s at %s ===\n%v\n\n%s\n",
 		where, time.Now().Format(time.RFC3339), r, debug.Stack())
 }

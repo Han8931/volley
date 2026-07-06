@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+  settings:
+    errcheck:
+      # Best-effort cleanup on error/defer paths: closing a file we are about to
+      # discard, removing a temp file, or closing a response body. A failure here
+      # has no meaningful recovery, so these are intentionally unchecked.
+      exclude-functions:
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - os.Remove
+    staticcheck:
+      # QF* are stylistic "quickfix" suggestions (e.g. rewrite as a tagged
+      # switch); keep the correctness (SA/ST) checks, drop the style nits.
+      checks:
+        - all
+        - -QF1002
+        - -QF1003
