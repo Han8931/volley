@@ -10,6 +10,46 @@ import (
 	"github.com/tabularasa/volley/internal/model"
 )
 
+func TestCopyButtonShownOnlyForCompletedResponse(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	if strings.Contains(stripANSI(m.viewResponseInner()), "copy") {
+		t.Error("no copy button before a response exists")
+	}
+	m.hasResp = true
+	m.resp = model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"ok":true}`)}
+	m.respText = `{"ok":true}`
+	m.vp.SetContent(m.respText)
+	if !strings.Contains(stripANSI(m.viewResponseInner()), "copy") {
+		t.Error("a completed response should show the copy button")
+	}
+	m.sending = true // a resend in flight replaces the button with the spinner
+	if strings.Contains(stripANSI(m.viewResponseInner()), "copy") {
+		t.Error("copy button must be hidden while a request is in flight")
+	}
+}
+
+func TestCopyButtonClickCopiesResponse(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.hasResp = true
+	m.resp = model.Response{Status: "200 OK", StatusCode: 200, Body: []byte("hello-body")}
+	m.respText = "hello-body"
+	m.vp.SetContent(m.respText)
+
+	// Locating the button in the rendered view and clicking it also verifies the
+	// copyButtonClicked geometry matches where respHeaderBar actually draws it.
+	x, y := findInView(m, "⧉ copy")
+	if x < 0 {
+		t.Fatal("copy button not found in the rendered response header")
+	}
+	next, _ := m.handleClick(clickAt(x, y))
+	got := next.(Model)
+	// The clipboard may be unavailable in headless CI, so accept either the
+	// success or the unavailable message — both prove the click routed to a yank.
+	if !strings.Contains(got.statusMsg, "yanked") && !strings.Contains(got.statusMsg, "clipboard") {
+		t.Fatalf("clicking copy should attempt a yank, status=%q", got.statusMsg)
+	}
+}
+
 func TestRenderStatusSummaryTiers(t *testing.T) {
 	resp := model.Response{
 		Status:     "200 OK",

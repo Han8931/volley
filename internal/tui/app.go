@@ -4,7 +4,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -59,33 +58,56 @@ const (
 	pendingImportCurl
 )
 
-// Model is the root Bubble Tea model. It owns pane focus and the in-progress
-// request/response; modal state is derived from whether a child is editing.
+// Model is the root Bubble Tea model. Its fields are grouped into embedded
+// concern-structs (editorState, responseState, …) rather than one flat wall of
+// state. The groups are anonymous, so Go promotes their fields: the rest of the
+// package still reads m.hasResp / m.url with no qualifier, while the type reads
+// as a handful of documented concerns instead of ~45 mixed fields. Modal state
+// is derived from whether a child is editing.
 type Model struct {
 	width, height int
+	focus         focus
+	statusMsg     string // ephemeral feedback shown in the status bar
 
-	focus focus
+	vars vars.Store
 
+	editorState
+	treeState
+	responseState
+	selectionState
+	searchState
+	cmdlineState
+	promptState
+	chordState
+	inputState
+}
+
+// editorState is the request currently being edited in the top bar + request
+// pane, plus the baseline used to detect unsaved changes.
+type editorState struct {
 	req          model.Request
 	url          vimtext.Buffer // URL editor: a single-line modal (Normal/Insert) vim buffer
 	timeoutInput textinput.Model
 	methodIdx    int
+	timeout      time.Duration
+	reqPane      requestPane
+	currentName  string        // saved request backing the editor, "" for an unsaved buffer
+	baseline     model.Request // last saved/loaded request, compared against to detect edits
+}
 
-	reqPane requestPane
-
+// treeState is the collections sidebar and the row of open request tabs.
+type treeState struct {
 	collectionStore collections.Store
 	collectionPane  collectionPane
-	collectionShown bool // effective tree visibility: the preference, gated by width
-	collectionPref  bool // user's show/hide preference, restored when the window is wide enough
-	collectionWide  bool // NerdTree-style zoom: widen the tree so long request names are visible
-	currentName     string
+	collectionShown bool     // effective tree visibility: the preference, gated by width
+	collectionPref  bool     // user's show/hide preference, restored when the window is wide enough
+	collectionWide  bool     // NerdTree-style zoom: widen the tree so long request names are visible
 	openTabs        []string // saved requests opened as tabs from the tree
 	activeTab       int
+}
 
-	vars    vars.Store
-	timeout time.Duration
-
-	// response state
+// responseState is the response viewer and the lifecycle of the in-flight send.
+type responseState struct {
 	vp          viewport.Model
 	spin        spinner.Model
 	sending     bool
@@ -98,53 +120,65 @@ type Model struct {
 	respHeaders string // rendered headers
 	rawBody     bool   // sticky view preference: show the body verbatim instead of pretty-printing JSON (mode is shown in respTabBar)
 	pendingG    bool   // for the "gg" motion in the response viewport
+}
 
-	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
-	pendingComma  bool // for leader-style commands: ",n" tree toggle, ",g" focus hints
-	focusHints    bool // awaiting a numeric pane target after ",g"
-
-	// Swallows terminal-injected vertical navigation keys that can accompany
-	// wheel mouse events, keeping other panes still while the response scrolls.
-	wheel wheelSuppressor
-
-	// Double-click tracking for the collections tree: a second click on the same
-	// row within doubleClickWindow opens (a file) or toggles (a folder).
-	lastTreeClickRow int
-	lastTreeClick    time.Time
-
-	// Drag-to-select in the response viewport. selecting is true between a left
-	// press and release over the response body; selDragged distinguishes a drag
-	// (selection) from a plain click. Positions index the response text.
+// selectionState is drag-to-select in the response viewport. selecting is true
+// between a left press and release over the response body; selDragged
+// distinguishes a drag (selection) from a plain click. Positions index the text.
+type selectionState struct {
 	selecting  bool
 	selDragged bool
 	selAnchor  textPos
 	selCursor  textPos
+}
 
-	// command line (":" commands and "/" search)
-	cmd       textinput.Model
-	cmdActive bool
-	cmdKind   rune // ':' or '/'
-
-	// search state
+// searchState is the "/" incremental search over the response body.
+type searchState struct {
 	searchQuery string
 	searchHits  []int // line offsets containing a match
 	searchIdx   int
+}
 
-	showHelp bool
+// cmdlineState is the ":" command / "/" search input line.
+type cmdlineState struct {
+	cmd       textinput.Model
+	cmdActive bool
+	cmdKind   rune // ':' or '/'
+}
 
+// promptState holds the transient overlays and confirmations that gate input:
+// the help screen, the tree menu, delete/close confirmations, and the
+// unsaved-changes guard.
+type promptState struct {
+	showHelp        bool
 	collectionMenu  bool   // NERDTree-like "m" filesystem menu is awaiting a key
 	confirmDelete   string // name of a request/group awaiting y/n delete confirmation
 	confirmGroup    bool   // whether confirmDelete refers to a group
 	confirmCloseTab bool   // active tab has unsaved edits and awaits y/n close confirmation
 	closeTabIdx     int    // tab index to close if confirmCloseTab is accepted
-	statusMsg       string // ephemeral feedback shown in the status bar
-
-	// baseline is the last saved/loaded request, used to detect unsaved edits.
-	baseline model.Request
 	// pendingAction is a discarding transition (open/new/quit) held behind an
 	// unsaved-changes prompt; pendingArg carries its payload (e.g. a name).
 	pendingAction pendingKind
 	pendingArg    string
+}
+
+// chordState tracks multi-key sequences awaiting their next keystroke.
+type chordState struct {
+	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
+	pendingComma  bool // for leader-style commands: ",n" tree toggle, ",g" focus hints
+	focusHints    bool // awaiting a numeric pane target after ",g"
+}
+
+// inputState tracks low-level pointer state: the wheel-key suppressor and the
+// double-click detector for the collections tree.
+type inputState struct {
+	// Swallows terminal-injected vertical navigation keys that can accompany
+	// wheel mouse events, keeping other panes still while the response scrolls.
+	wheel wheelSuppressor
+	// Double-click tracking for the collections tree: a second click on the same
+	// row within doubleClickWindow opens (a file) or toggles (a folder).
+	lastTreeClickRow int
+	lastTreeClick    time.Time
 }
 
 // homeShorten replaces the user's home directory prefix with "~".
@@ -187,19 +221,25 @@ func New() Model {
 	items, listErr := store.List()
 
 	m := Model{
-		req:             model.NewRequest(),
-		baseline:        model.NewRequest(),
-		url:             *urlBuf,
-		timeoutInput:    timeoutInput,
-		spin:            sp,
-		vp:              vp,
-		cmd:             cmd,
-		reqPane:         newRequestPane(),
-		collectionStore: store,
-		collectionPane:  newCollectionPane(items, homeShorten(store.Root)),
-		collectionShown: true,
-		collectionPref:  true,
-		vars:            vars.New(),
+		vars: vars.New(),
+		editorState: editorState{
+			req:          model.NewRequest(),
+			baseline:     model.NewRequest(),
+			url:          *urlBuf,
+			timeoutInput: timeoutInput,
+			reqPane:      newRequestPane(),
+		},
+		treeState: treeState{
+			collectionStore: store,
+			collectionPane:  newCollectionPane(items, homeShorten(store.Root)),
+			collectionShown: true,
+			collectionPref:  true,
+		},
+		responseState: responseState{
+			spin: sp,
+			vp:   vp,
+		},
+		cmdlineState: cmdlineState{cmd: cmd},
 	}
 	m = m.setFocus(focusCollection)
 	if listErr != nil {
@@ -957,6 +997,9 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.sendButtonClicked(msg) {
 		return m.send()
 	}
+	if m.copyButtonClicked(msg) {
+		return m.yankResponse()
+	}
 
 	l := m.computeLayout()
 	x, y := msg.X, msg.Y
@@ -1151,6 +1194,31 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	buttonY := m.topBarY() + 1 // URL pane content row, below the top border.
 	buttonStartX := urlPaneX + l.urlInnerW - buttonW
 	buttonEndX := urlPaneX + l.urlInnerW - 1
+	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
+}
+
+// copyButtonClicked reports whether msg hit the copy pill on the response
+// header. The button is only drawn for a completed (non-in-flight) response, so
+// the geometry mirrors respHeaderBar: right-aligned within the viewport width,
+// on the header row just below the pane's top border.
+func (m Model) copyButtonClicked(msg tea.MouseMsg) bool {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
+		return false
+	}
+	if !m.hasResp || m.sending {
+		return false
+	}
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	contentX := respX + 2 // pane border + left padding, matching responseTextPos
+	buttonW := lipgloss.Width(m.copyButtonView())
+	buttonEndX := contentX + m.vp.Width - 1
+	buttonStartX := buttonEndX - buttonW + 1
+	buttonY := m.bodyTopY() + 1 // response header row, below the pane's top border
 	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
 }
 
@@ -1350,164 +1418,6 @@ func (m Model) currentResponseViewText() string {
 	return highlightResponseText(m.respText)
 }
 
-// rawRequest assembles the current edits into a Request WITHOUT expanding
-// {{variables}} or folding query params into the URL. This is the canonical
-// editable form used both for saving to disk and for unsaved-changes detection.
-func (m Model) rawRequest() model.Request {
-	req := m.req
-	req.URL = m.url.Text()
-	req.Headers = m.reqPane.headersOut()
-	req.Query = m.reqPane.queryOut()
-	req.Body = m.reqPane.bodyOut()
-	req.Auth = m.reqPane.authOut()
-	req.Timeout = m.timeout
-	return req
-}
-
-// buildRequest merges the URL bar and request pane into one Request, then
-// expands {{variables}} and folds query params into the URL.
-func (m Model) buildRequest() model.Request {
-	req := m.vars.Apply(m.rawRequest())
-	req = req.ApplyAuth() // turn the auth helper into a header/query param
-	req.URL = appendQuery(req.URL, req.Query)
-	return req
-}
-
-// dirty reports whether the current edits diverge from the last saved or loaded
-// state — i.e. there are unsaved changes worth guarding before a discard.
-func (m Model) dirty() bool {
-	return !requestsEqual(m.rawRequest(), m.baseline)
-}
-
-// requestsEqual compares two requests field by field. A nil and an empty slice
-// are treated as equal so a freshly-loaded request never reads as dirty.
-func requestsEqual(a, b model.Request) bool {
-	if a.Method != b.Method || a.URL != b.URL || a.Body != b.Body || a.Timeout != b.Timeout {
-		return false
-	}
-	if a.Auth != b.Auth {
-		return false
-	}
-	if len(a.Headers) != len(b.Headers) || len(a.Query) != len(b.Query) {
-		return false
-	}
-	for i := range a.Headers {
-		if a.Headers[i] != b.Headers[i] {
-			return false
-		}
-	}
-	for i := range a.Query {
-		if a.Query[i] != b.Query[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// The guarded* helpers perform a transition that would discard the current
-// request, but first pop an unsaved-changes prompt when there are edits.
-
-func (m Model) guardedOpen(name string) (tea.Model, tea.Cmd) {
-	if m.dirty() {
-		return m.armSavePrompt(pendingOpenRequest, name), nil
-	}
-	return m.loadSavedRequest(name), nil
-}
-
-func (m Model) guardedNewBlank() (tea.Model, tea.Cmd) {
-	if m.dirty() {
-		return m.armSavePrompt(pendingNewBlank, ""), nil
-	}
-	return m.newBlankRequest(), nil
-}
-
-func (m Model) guardedNewSaved(name string) (tea.Model, tea.Cmd) {
-	if m.dirty() {
-		return m.armSavePrompt(pendingNewNamed, name), nil
-	}
-	return m.newSavedRequest(name), nil
-}
-
-func (m Model) guardedQuit() (tea.Model, tea.Cmd) {
-	if m.dirty() {
-		return m.armSavePrompt(pendingQuit, ""), nil
-	}
-	return m, tea.Quit
-}
-
-// armSavePrompt records the deferred transition and shows the y/n/esc prompt.
-func (m Model) armSavePrompt(action pendingKind, arg string) Model {
-	m.pendingAction = action
-	m.pendingArg = arg
-	verb := "continuing"
-	switch action {
-	case pendingOpenRequest:
-		verb = "opening another request"
-	case pendingNewBlank, pendingNewNamed:
-		verb = "starting a new request"
-	case pendingImportCurl:
-		verb = "importing a curl command"
-	case pendingQuit:
-		verb = "quitting"
-	}
-	if m.currentName != "" {
-		m.statusMsg = "unsaved changes in " + m.currentName +
-			" — save before " + verb + "? (y)es (n)o (esc)"
-	} else {
-		m.statusMsg = "unsaved changes — (n) discard and continue, (esc) cancel · :w <name> to save"
-	}
-	return m
-}
-
-func (m *Model) clearSavePrompt() {
-	m.pendingAction = pendingNone
-	m.pendingArg = ""
-}
-
-// resolveSaveConfirm handles the key pressed while the save prompt is armed.
-func (m Model) resolveSaveConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y":
-		if m.currentName == "" {
-			// Nothing to save to yet; keep the prompt so n/esc still work.
-			m.statusMsg = "no name yet — use :w <name> to save, or (n) to discard"
-			return m, nil
-		}
-		m, ok := m.saveCurrentRequest(m.currentName)
-		if !ok {
-			// Save failed — keep the prompt armed so the pending transition
-			// doesn't discard the user's edits; the failure is in statusMsg.
-			return m, nil
-		}
-		return m.performPending()
-	case "n":
-		return m.performPending()
-	default:
-		m.clearSavePrompt()
-		m.statusMsg = "cancelled"
-		return m, nil
-	}
-}
-
-// performPending runs the transition that was deferred behind the save prompt.
-func (m Model) performPending() (tea.Model, tea.Cmd) {
-	action, arg := m.pendingAction, m.pendingArg
-	m.clearSavePrompt()
-	switch action {
-	case pendingOpenRequest:
-		return m.loadSavedRequest(arg), nil
-	case pendingNewBlank:
-		return m.newBlankRequest(), nil
-	case pendingNewNamed:
-		return m.newSavedRequest(arg), nil
-	case pendingImportCurl:
-		return m.applyCurlImport(arg), nil
-	case pendingQuit:
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
 // send fires the current request (merging headers/body/query) if idle. The
 // request runs under a cancellable context whose cancel func is stashed on the
 // model so esc can abort it mid-flight.
@@ -1550,20 +1460,4 @@ func (m Model) cancelSend() (tea.Model, tea.Cmd) {
 	m.sending = false
 	m.statusMsg = "request cancelled"
 	return m, nil
-}
-
-// appendQuery merges enabled query rows into base's query string.
-func appendQuery(base string, kvs []model.KV) string {
-	u, err := url.Parse(base)
-	if err != nil {
-		return base
-	}
-	q := u.Query()
-	for _, kv := range kvs {
-		if kv.Enabled && kv.Key != "" {
-			q.Add(kv.Key, kv.Value)
-		}
-	}
-	u.RawQuery = q.Encode()
-	return u.String()
 }

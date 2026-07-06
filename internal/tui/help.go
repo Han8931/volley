@@ -69,7 +69,7 @@ var helpSections = []struct {
 		{"j / k", "scroll  ·  gg / G top / bottom"},
 		{"ctrl+d / ctrl+u", "half-page scroll"},
 		{"/", "search  ·  n / N next / prev"},
-		{"y", "yank body to clipboard"},
+		{"y  ·  ⧉ copy", "yank body to clipboard (key or click the header button)"},
 	}},
 	{"Command line", [][2]string{
 		{":save users/list", "save current request"},

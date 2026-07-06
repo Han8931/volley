@@ -20,6 +20,9 @@ var (
 
 const sendButtonText = " SEND "
 
+// copyButtonText labels the clickable copy affordance in the response header.
+const copyButtonText = " ⧉ copy "
+
 // View implements tea.Model.
 func (m Model) View() string {
 	if m.width == 0 {
@@ -192,6 +195,13 @@ func (m Model) sendButtonView() string {
 	return st.Render(sendButtonText)
 }
 
+// copyButtonView renders the clickable "copy" pill shown on the right of the
+// response header; copyButtonClicked hit-tests against the same rendered width.
+func (m Model) copyButtonView() string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).
+		Background(colAccent).Bold(true).Render(copyButtonText)
+}
+
 func (m Model) viewMain(l layout) string {
 	topBar := lipgloss.JoinHorizontal(lipgloss.Top,
 		m.viewMethodPane(l),
@@ -320,12 +330,15 @@ func (m Model) respHeaderBar(width int) string {
 		tabs = focusHintBadge(m.focusHintKey(focusResponse)) + " " + tabs
 	}
 	// The right side shows the spinner while a request is in flight, otherwise
-	// the response status + timing. Reserve at least one column of separation.
+	// the response status + timing followed by the clickable copy button.
+	// Reserve at least one column of separation.
 	var right string
 	if m.sending {
 		right = m.spin.View() + dim(" sending…")
 	} else {
-		right = renderStatusSummary(m.resp, width-lipgloss.Width(tabs)-1)
+		copyBtn := m.copyButtonView()
+		reserved := lipgloss.Width(tabs) + lipgloss.Width(copyBtn) + 2
+		right = renderStatusSummary(m.resp, width-reserved) + " " + copyBtn
 	}
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(right)
 	if gap < 1 {
