@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -225,6 +228,12 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 				m.statusMsg = "timeout set to " + d.String()
 			}
 		}
+	case "editor":
+		name := ""
+		if len(fields) > 1 {
+			name = strings.Join(fields[1:], " ")
+		}
+		return m.openExternalEditor(name)
 	case "tabnew", "tabe", "tabedit":
 		if len(fields) < 2 {
 			m.statusMsg = "usage: :tabnew <saved request>"
@@ -380,6 +389,230 @@ func formatTimeout(d time.Duration) string {
 		return ""
 	}
 	return d.String()
+}
+
+type editorFinishedMsg struct {
+	path       string
+	targetName string // saved request to write/load; empty means edit current buffer only
+	err        error
+}
+
+func (m Model) openExternalEditor(name string) (tea.Model, tea.Cmd) {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if editor == "" {
+		m.statusMsg = "set $VISUAL or $EDITOR to use :editor"
+		return m, nil
+	}
+	req := m.rawRequest()
+	if name != "" && name != m.currentName {
+		if m.dirty() {
+			m.statusMsg = "save or discard current edits before editing another request"
+			return m, nil
+		}
+		loaded, err := m.collectionStore.Load(name)
+		if err != nil {
+			m.statusMsg = "no saved request named " + name
+			return m, nil
+		}
+		req = loaded
+	}
+	f, err := os.CreateTemp("", "volley-request-*.json")
+	if err != nil {
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	path := f.Name()
+	initial, err := editorInitialContent(req)
+	if err != nil {
+		f.Close()
+		os.Remove(path)
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	if _, err := f.WriteString(initial); err != nil {
+		f.Close()
+		os.Remove(path)
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	parts := strings.Fields(editor)
+	cmd := exec.Command(parts[0], append(parts[1:], path)...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return editorFinishedMsg{path: path, targetName: name, err: err}
+	})
+}
+
+// editableRequest is the JSON a user sees and edits via :editor. It mirrors the
+// on-disk storage shape (lowercase keys, an omitted-when-empty auth block) so
+// the two hand-editable forms read consistently, and — like the storage DTO —
+// keeps format concerns out of the domain model.Request. It lives only in a
+// temp file for one round-trip, so it has no persisted-schema compatibility to
+// honor. json.Unmarshal matches these tags case-insensitively, so a stray
+// "Name"/"URL" from the user still parses.
+type editableRequest struct {
+	Method  string           `json:"method"`
+	URL     string           `json:"url"`
+	Headers []editableHeader `json:"headers,omitempty"`
+	Query   []editableKV     `json:"query,omitempty"`
+	Body    string           `json:"body,omitempty"`
+	Auth    *editableAuth    `json:"auth,omitempty"`
+	Timeout string           `json:"timeout,omitempty"`
+}
+
+type editableHeader struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+}
+
+type editableKV struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+}
+
+type editableAuth struct {
+	Type     string `json:"type,omitempty"`
+	Token    string `json:"token,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Key      string `json:"key,omitempty"`
+	Value    string `json:"value,omitempty"`
+	InQuery  bool   `json:"inQuery,omitempty"`
+}
+
+func editorInitialContent(req model.Request) (string, error) {
+	b, err := json.MarshalIndent(editableFromRequest(req), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b) + "\n", nil
+}
+
+func editableFromRequest(req model.Request) editableRequest {
+	out := editableRequest{
+		Method: req.Method,
+		URL:    req.URL,
+		Body:   req.Body,
+	}
+	for _, h := range req.Headers {
+		out.Headers = append(out.Headers, editableHeader{Name: h.Name, Value: h.Value, Enabled: h.Enabled})
+	}
+	for _, q := range req.Query {
+		out.Query = append(out.Query, editableKV{Key: q.Key, Value: q.Value, Enabled: q.Enabled})
+	}
+	if req.Auth.Type != model.AuthNone {
+		out.Auth = &editableAuth{
+			Type:     req.Auth.Type,
+			Token:    req.Auth.Token,
+			Username: req.Auth.Username,
+			Password: req.Auth.Password,
+			Key:      req.Auth.Key,
+			Value:    req.Auth.Value,
+			InQuery:  req.Auth.InQuery,
+		}
+	}
+	if req.Timeout > 0 {
+		out.Timeout = req.Timeout.String()
+	}
+	return out
+}
+
+func parseEditedRequest(b []byte) (model.Request, error) {
+	var in editableRequest
+	if err := json.Unmarshal(b, &in); err != nil {
+		return model.Request{}, err
+	}
+	method := strings.ToUpper(strings.TrimSpace(in.Method))
+	if method == "" {
+		method = "GET"
+	}
+	if !validMethod(method) {
+		return model.Request{}, fmt.Errorf("unknown method %q", in.Method)
+	}
+	req := model.Request{
+		Method: method,
+		URL:    strings.TrimSpace(in.URL),
+		Body:   in.Body,
+	}
+	for _, h := range in.Headers {
+		req.Headers = append(req.Headers, model.Header{Name: h.Name, Value: h.Value, Enabled: h.Enabled})
+	}
+	for _, q := range in.Query {
+		req.Query = append(req.Query, model.KV{Key: q.Key, Value: q.Value, Enabled: q.Enabled})
+	}
+	if in.Auth != nil {
+		req.Auth = model.Auth{
+			Type:     in.Auth.Type,
+			Token:    in.Auth.Token,
+			Username: in.Auth.Username,
+			Password: in.Auth.Password,
+			Key:      in.Auth.Key,
+			Value:    in.Auth.Value,
+			InQuery:  in.Auth.InQuery,
+		}
+	}
+	if strings.TrimSpace(in.Timeout) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(in.Timeout))
+		if err != nil || d < 0 {
+			return model.Request{}, fmt.Errorf("bad timeout %q", in.Timeout)
+		}
+		req.Timeout = d
+	}
+	return req, nil
+}
+
+func validMethod(method string) bool {
+	for _, m := range model.Methods {
+		if method == m {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) applyEditorResult(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
+	defer os.Remove(msg.path)
+	if msg.err != nil {
+		m.statusMsg = "editor failed: " + msg.err.Error()
+		return m, nil
+	}
+	b, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	req, err := parseEditedRequest(b)
+	if err != nil {
+		m.statusMsg = "editor parse failed: " + err.Error()
+		return m, nil
+	}
+	if msg.targetName != "" {
+		if err := m.collectionStore.Save(msg.targetName, req); err != nil {
+			m.statusMsg = "editor save failed: " + err.Error()
+			return m, nil
+		}
+		m.refreshCollections()
+		loaded := m.loadSavedRequest(msg.targetName)
+		if loaded.currentName != msg.targetName {
+			return loaded, nil // saved, but the reload failed — surface its error, don't mask it
+		}
+		loaded.statusMsg = "updated " + msg.targetName + " from editor"
+		return loaded, nil
+	}
+	baseline := m.baseline
+	m = m.applyRequest(req)
+	m.baseline = baseline // editing through $EDITOR must still count as unsaved changes
+	m.statusMsg = "updated request from editor"
+	return m, nil
 }
 
 func (m Model) loadSavedRequest(name string) Model {
@@ -576,7 +809,7 @@ func (m *Model) resetSearch() {
 	m.searchHits = nil
 	m.searchIdx = 0
 	if m.hasResp {
-		m.vp.SetContent(m.currentResponseText())
+		m.vp.SetContent(m.currentResponseViewText())
 	}
 }
 

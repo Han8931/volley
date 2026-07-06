@@ -15,7 +15,7 @@ var helpSections = []struct {
 		{":send", "send the request"},
 		{":", "command line"},
 		{"?", "toggle this help"},
-		{",n", "show / hide collections tree"},
+		{",n  ·  ,g", "show / hide collections tree  ·  numbered pane jump"},
 		{"q / :q", "quit (prompts if unsaved)"},
 	}},
 	{"Tabs (open saved requests)", [][2]string{
@@ -28,10 +28,10 @@ var helpSections = []struct {
 		{"r", "cycle the HTTP method (the only key that changes it)"},
 		{"tab / ^w", "reach it from the URL bar"},
 	}},
-	{"URL bar (types directly)", [][2]string{
-		{"type", "edit the URL — no i needed"},
+	{"URL bar", [][2]string{
+		{"i / a  ·  click", "edit the URL"},
 		{"tab / ^w", "move to another pane"},
-		{"esc", "NORMAL sub-mode: Vim edits (x w b C dd p u …)"},
+		{"NORMAL", "Vim edits (x w b C dd p u …)"},
 		{",t", "edit inline timeout (leader)"},
 	}},
 	{"Collections / NerdTree", [][2]string{
@@ -79,6 +79,7 @@ var helpSections = []struct {
 		{":copy old new", "copy saved request"},
 		{":import curl …", "fill request from a pasted curl command"},
 		{":copy curl", "copy current request as a curl command"},
+		{":editor [name]", "edit current or named request in $EDITOR"},
 		{":method POST", "set HTTP method"},
 		{":set tok=abc", "define a {{tok}} variable"},
 		{":timeout 10s", "set request timeout"},

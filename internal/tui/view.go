@@ -108,10 +108,13 @@ func (m Model) renderURLField(width int) string {
 }
 
 // viewMethodPane renders the standalone HTTP-method selector to the left of the
-// URL bar. It cycles with j/k or ↑/↓ when focused.
+// URL bar. It cycles with r when focused.
 func (m Model) viewMethodPane(l layout) string {
-	label := lipgloss.NewStyle().Foreground(colMethod).Bold(true).
-		Render(fmt.Sprintf("%-7s", m.req.Method))
+	method := fmt.Sprintf("%-7s", m.req.Method)
+	label := lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(method)
+	if m.focusHints {
+		label = focusHintBadge("2") + " " + lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(strings.TrimSpace(m.req.Method))
+	}
 	return m.paneStyle(focusMethod, l.methodInnerW, 1).Render(label)
 }
 
@@ -124,6 +127,9 @@ func (m Model) viewURLBar(l layout) string {
 	right := m.sendButtonView()
 	if l.showTimeout || m.timeoutInput.Focused() {
 		right = m.timeoutSegView() + " " + right
+	}
+	if m.focusHints {
+		urlView = focusHintBadge("3") + " " + urlView
 	}
 	space := urlContentWidth(l) - lipgloss.Width(urlView) - lipgloss.Width(right)
 	if space < 1 {
@@ -205,7 +211,7 @@ func (m Model) viewMain(l layout) string {
 		return right
 	}
 	collections := m.paneStyle(focusCollection, l.collectionInnerW, l.collectionInnerH).
-		Render(m.collectionPane.view())
+		Render(m.collectionPane.viewWithTitle(m.focusHintTitle(focusCollection, "COLLECTIONS")))
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		collections, strings.Repeat(" ", l.gap), right)
 }
@@ -273,7 +279,11 @@ func (m Model) viewOpenTabs(l layout) string {
 }
 
 func (m Model) viewBody(l layout) string {
-	request := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view())
+	reqHint := ""
+	if m.focusHints {
+		reqHint = m.focusHintKey(focusRequest)
+	}
+	request := m.paneStyle(focusRequest, l.reqInnerW, l.bodyInnerH).Render(m.reqPane.view(reqHint))
 	response := m.paneStyle(focusResponse, l.respInnerW, l.respInnerH).Render(m.viewResponseInner())
 	gap := strings.Repeat(" ", l.gap)
 
@@ -287,9 +297,9 @@ func (m Model) viewResponseInner() string {
 	switch {
 	case m.sending && !m.hasResp:
 		// Nothing to keep on screen yet — show the spinner centered in the pane.
-		return title("RESPONSE") + "\n\n" + m.spin.View() + dim(" sending…")
+		return m.focusHintTitle(focusResponse, "RESPONSE") + "\n\n" + m.spin.View() + dim(" sending…")
 	case !m.hasResp:
-		return title("RESPONSE") + "\n\n" +
+		return m.focusHintTitle(focusResponse, "RESPONSE") + "\n\n" +
 			dim("Send a request with ") + keyHint("⏎") + dim(" to see the result here.")
 	default:
 		// A completed response, or a resend in flight: keep the previous body
@@ -306,6 +316,9 @@ func (m Model) viewResponseInner() string {
 // pane clips the overflow, keeping the header to a single row.
 func (m Model) respHeaderBar(width int) string {
 	tabs := m.respTabBar()
+	if m.focusHints {
+		tabs = focusHintBadge(m.focusHintKey(focusResponse)) + " " + tabs
+	}
 	// The right side shows the spinner while a request is in flight, otherwise
 	// the response status + timing. Reserve at least one column of separation.
 	var right string
@@ -375,10 +388,12 @@ func (m Model) viewStatusBar() string {
 		hints = " vim: x dd dw cw C w b u p · esc — leave field"
 	case m.pendingWindow:
 		hints = " window: h/j/k/l pick a pane"
+	case m.focusHints:
+		hints = " jump: 1 tree · 2 method · 3 url · 4 request · 5 response · esc cancel"
 	case m.focus == focusURL:
 		hints = " i edit URL · t timeout · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusMethod:
-		hints = " j/k or ↑/↓ change method · ⏎ send · tab / ^w move panes · ? help"
+		hints = " r change method · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusCollection:
 		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
@@ -445,8 +460,36 @@ func truncateMiddle(s string, max int) string {
 	return string(r[:head]) + "…" + string(r[len(r)-tail:])
 }
 
+func (m Model) focusHintTitle(f focus, label string) string {
+	if !m.focusHints {
+		return title(label)
+	}
+	return focusHintBadge(m.focusHintKey(f)) + " " + title(label)
+}
+
+func (m Model) focusHintKey(f focus) string {
+	switch f {
+	case focusCollection:
+		return "1"
+	case focusMethod:
+		return "2"
+	case focusURL:
+		return "3"
+	case focusRequest:
+		return "4"
+	case focusResponse:
+		return "5"
+	default:
+		return ""
+	}
+}
+
 func title(s string) string {
 	return lipgloss.NewStyle().Foreground(colAccent).Bold(true).Render(s)
 }
 func dim(s string) string     { return lipgloss.NewStyle().Foreground(colDim).Render(s) }
 func keyHint(s string) string { return lipgloss.NewStyle().Foreground(colOK).Render(s) }
+
+func focusHintBadge(s string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(colOK).Bold(true).Padding(0, 1).Render(s)
+}

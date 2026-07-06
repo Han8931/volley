@@ -280,6 +280,10 @@ func parentPath(name string) string {
 }
 
 func (p collectionPane) view() string {
+	return p.viewWithTitle(title("COLLECTIONS"))
+}
+
+func (p collectionPane) viewWithTitle(headerTitle string) string {
 	rootLabel := p.root
 	if rootLabel == "" {
 		rootLabel = "collections"
@@ -293,7 +297,7 @@ func (p collectionPane) view() string {
 		rootLine = truncateRunes(rootLine, p.width-2) // leave room for the pane padding
 	}
 	header := []string{
-		title("COLLECTIONS"),
+		headerTitle,
 		dim(rootLine),
 	}
 

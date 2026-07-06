@@ -1,14 +1,34 @@
 # Volley
 
-A Vim-centric TUI API client and load tester — a terminal alternative to
-Postman, inspired by [posting](https://github.com/darrenburns/posting) but
-built for Vim users and high-concurrency load testing.
+**Volley is a Vim-first terminal API client**: collections, tabs, auth helpers,
+variables, curl import/export, pretty responses, and keyboard-native request
+editing — all in one fast TUI.
 
-**Status:** functional MVP — request/response, Vim URL/body editing, collections,
-auth helpers, and curl import/export are in. Load testing is the next major
-feature.
+It is built for people who live in the terminal and want a Postman/Bruno-style
+workflow without leaving Vim muscle memory. Load testing is planned as Volley's
+next major differentiator.
 
-## Stack
+## Why Volley?
+
+- **Vim-native workflow** — normal/insert modes, `hjkl`, `ctrl+w` pane movement,
+  operators/motions in URL and body editors, and `:` commands.
+- **Collections that feel like NerdTree** — folders, marks, recursive expand /
+  collapse, context menu, request tabs, and tree-click tab opening.
+- **Fast request editing** — Headers, Body, Params, and Auth tabs with Vim-like
+  table navigation and a raw body editor.
+- **Useful response viewer** — status/timing/size, pretty/raw JSON toggle,
+  JSON syntax highlighting, search, yank, and selectable text.
+- **Git-friendly storage** — saved requests are plain JSON files in your user
+  config directory.
+- **No account, no cloud, no browser** — just a terminal binary.
+
+## Status
+
+Functional MVP. Volley currently supports request/response editing, collections,
+request tabs, auth helpers, variables, curl import/export, JSON response
+highlighting, and Vim-style navigation. Load testing is not implemented yet.
+
+## Tech stack
 
 Go · [Bubble Tea](https://github.com/charmbracelet/bubbletea) ·
 [Lip Gloss](https://github.com/charmbracelet/lipgloss) ·
@@ -17,127 +37,158 @@ Go · [Bubble Tea](https://github.com/charmbracelet/bubbletea) ·
 ## Run
 
 ```sh
-go run .          # or: go build -o volley . && ./volley
+go run .
+
+# or build a local binary
+go build -o volley .
+./volley
 ```
 
-## Keys (so far)
+Volley starts in **NORMAL mode** focused on the collections tree, so you can pick
+a saved request immediately.
 
-| Key            | Action                                          |
-|----------------|-------------------------------------------------|
-| `ctrl+w` `h/j/k/l` | move focus between panes (Vim window nav); `ctrl+w j` from Method/URL jumps to Body |
-| arrow keys     | mirror `h/j/k/l` — move **within** the focused pane |
-| `tab` / `shift+tab` | cycle focus between panes                  |
-| `:send` or SEND button | send request                            |
-| **Method pane** | `r` cycles the HTTP method (`tab`/`ctrl+w` to reach it) |
-| **URL bar**    | **types directly — just start typing, no `i` needed** |
-| `tab`/`ctrl+w` | move to another pane                            |
-| `esc` (URL)    | drop to NORMAL sub-mode with Vim edits (`x`, `w`, `b`, `C`, `dd`, `p`, `u`, …) |
-| URL NORMAL     | `i/a/I/A`, motions/operators, undo/redo, paste; `esc` again releases to pane navigation |
-| `,t`           | focus / edit the timeout field                   |
-| `i` / `a`      | edit focused field / cell (headers, params, auth fields, body) |
-| `esc`          | leave INSERT, back to NORMAL                     |
-| `,n`           | show / hide collections tree                    |
-| `q`            | quit (prompts if there are unsaved changes)     |
-| **Collections pane (NerdTree)** |                                 |
+## Quick workflow
+
+```text
+j/k                 move through the collection tree
+enter or click       open a request as a tab
+,g then number       jump directly to a pane
+ctrl+w h/j/k/l       move between panes
+:send                send the request
+p                   toggle raw/pretty JSON response
+/                   search the response
+:save name           save the current request
+```
+
+## Keybindings
+
+### Global
+
+| Key | Action |
+|-----|--------|
+| `ctrl+w h/j/k/l` | move focus between panes; from Method/URL, `ctrl+w j` jumps to Body |
+| `,g` | show numbered pane hints, then press the target number |
+| `tab` / `shift+tab` | cycle focus between panes |
+| arrow keys | mirror `h/j/k/l` inside the focused pane |
+| `?` | help overlay |
+| `:` | command line |
+| `q` | quit, prompting if there are unsaved changes |
+
+### Collections tree
+
+| Key | Action |
+|-----|--------|
 | `j/k` · `gg`/`G` · `P` | move selection · first/last · jump to top |
-| click request    | open the request as a tab                         |
-| `enter`/`l`/`o` | open request or toggle group                     |
-| `O` / `X`       | expand / collapse group **recursively**          |
-| `A`             | widen/narrow the tree to inspect long names      |
-| `space`         | mark/unmark request, then move cursor down       |
-| `T`             | open marked requests as tabs                     |
-| `H` / `L`       | switch open request tabs                         |
-| `h` · `p` · `x` | collapse group · jump to parent · close parent   |
-| `,n` · `R`      | show / hide tree · reload from disk              |
-| `m`             | open NerdTree-style menu (context-aware)         |
-| `m a` · `m g`   | add request into group · **new group**           |
-| `m r` · `m c`   | rename request/group · copy request              |
-| `m d` · `dd`    | delete request or group (asks `y/n` to confirm)  |
-| **Request pane** |                                               |
-| `[` / `]`       | previous / next sub-tab (Headers · Body · Params · Auth) |
-| `H` / `L`       | switch open request tabs when tabs are open       |
-| **Headers / Params** |                                             |
-| `j/k` · `gg`/`G` | move between rows · first/last row             |
-| `h/l` · `0/$` · `b/w` | key/value cell                            |
-| `i/a/enter` · `I/A` | edit current/key/value cell                  |
-| `o/O`          | add row below/above · `dd`/`dj` delete · `space` toggle on/off |
-| **Auth tab**   | `space`/`l`/`h` on Type cycles None/Bearer/Basic/API Key; edit fields with `i`/`enter` |
-| API Key auth   | `space`/`h`/`l` on “Add to” switches Header vs Query param |
-| **Body editor (Vim)** | `i`/`a`/`o` insert; `esc` → field-NORMAL; `esc` again leaves |
-| in field-NORMAL | `x dd D C s r`, operators `d/c/y` + motions `w b e $ 0`, counts (`3x`), `u`/`ctrl+r`, `p`/`P` |
-| `?`            | toggle keybindings help overlay                  |
-| `:`            | command line (see below)                          |
-| **Response pane** |                                              |
-| `[` / `]`      | switch Body / Headers tab                         |
-| `j/k`          | scroll · `gg`/`G` top/bottom · `^d`/`^u` half-page |
-| `/` · `n`/`N`  | search · next / previous match                   |
-| `y`            | yank response body to clipboard                  |
+| click request | open request as a tab |
+| `enter` / `l` / `o` | open request or toggle group |
+| `O` / `X` | expand / collapse recursively |
+| `A` | widen/narrow tree |
+| `space` | mark/unmark request, then move down |
+| `T` | open marked requests as tabs |
+| `H` / `L` | switch open request tabs |
+| `h` · `p` · `x` | collapse group · jump to parent · close parent |
+| `,n` · `R` | show/hide tree · reload from disk |
+| `m` | NerdTree-style context menu |
+| `m a` · `m g` | add request · new group |
+| `m r` · `m c` | rename · copy |
+| `m d` · `dd` | delete request/group with confirmation |
 
-## Command line & variables
+### Method and URL
 
-| Command            | Effect                                            |
-|--------------------|---------------------------------------------------|
-| `:new users/list`  | create/open a blank saved request                 |
-| `:save users/list` | save the current request                          |
-| `:save` / `:w`     | save back to the currently opened/created request |
-| `:open users/list` | open a saved request                              |
-| `:delete users/list` | delete a saved request                          |
-| `:rename old new`  | rename a saved request                            |
-| `:copy old new`    | copy a saved request                              |
-| `:import curl …`   | fill the editor from a pasted curl command        |
-| `:copy curl`       | copy the current request as a curl command        |
-| `:mkgroup APISet1` | create a group (folder), even when empty          |
-| `:rmgroup APISet1` | delete a group and everything under it            |
-| `:rengroup old new`| rename a group                                    |
-| `:ls`              | focus/refresh the collections tree                |
-| `:method POST`     | set the HTTP method                               |
-| `:set tok=abc123`  | define a variable usable as `{{tok}}`             |
-| `:send`            | send the current request                          |
-| `:timeout 10s`     | set the request timeout (or press `,t`)           |
-| `:tabnew name` / `:tabe name` | open a saved request as a tab          |
-| `:tabnext` / `:tabprevious` | switch request tabs                       |
-| `:tabclose` / `:tabonly` | close active tab / close all other tabs      |
-| `:help`            | help overlay                                      |
-| `:q` · `:q!`       | quit · quit discarding unsaved changes (`:qa` aliases work too) |
-| `:wq` / `:x`       | save the current request, then quit (`:wqa`/`:xa` aliases work too) |
+| Key | Action |
+|-----|--------|
+| `r` in Method pane | cycle HTTP method |
+| `i` / `a` in URL | edit the URL |
+| URL NORMAL | Vim motions/operators, undo/redo, paste |
+| `,t` | edit timeout inline |
 
-When a request has unsaved edits, switching to another request or quitting
-prompts to **save** (`y`), **discard** (`n`), or **cancel** (`esc`) so your
-changes are never silently lost. The method selector is its own focus target —
-reach it with `tab`/`shift+tab` or the `ctrl+w` window motions. The timeout field
-is edited inline with `,t` or `:timeout`. Arrow keys only move *within* the
-focused pane, never between panes.
+### Request editor
 
-Saved requests are stored as JSON under Volley's user config directory:
+| Key | Action |
+|-----|--------|
+| `[` / `]` | previous / next request sub-tab: Headers · Body · Params · Auth |
+| `H` / `L` | switch open request tabs when tabs are open |
+| `j/k` · `gg`/`G` | move rows in Headers/Params/Auth |
+| `h/l` · `0/$` · `b/w` | move between key/value cells |
+| `i/a/enter` · `I/A` | edit current/key/value cell |
+| `o/O` | add row below/above |
+| `dd` / `dj` | delete row |
+| `space` | toggle row enabled/disabled |
+| Body tab | `i/a/o` insert, `esc` to Vim-normal, `esc` again leaves |
+
+### Response pane
+
+| Key | Action |
+|-----|--------|
+| `[` / `]` | switch Body / Headers tab |
+| `p` | toggle raw / pretty JSON body |
+| `j/k` · `gg`/`G` | scroll · top/bottom |
+| `ctrl+d` / `ctrl+u` | half-page scroll |
+| `/` · `n`/`N` | search · next/previous match |
+| `y` | yank response body to clipboard |
+
+## Commands
+
+| Command | Effect |
+|---------|--------|
+| `:new users/list` | create/open a blank saved request |
+| `:save users/list` | save current request |
+| `:save` / `:w` | save back to the current request |
+| `:open users/list` | open a saved request |
+| `:delete users/list` | delete a saved request |
+| `:rename old new` | rename a saved request |
+| `:copy old new` | copy a saved request |
+| `:import curl …` | import a pasted curl command |
+| `:copy curl` | copy current request as curl |
+| `:editor` / `:editor name` | edit current or named saved request as JSON in `$VISUAL` / `$EDITOR` |
+| `:mkgroup APISet1` | create a group/folder |
+| `:rmgroup APISet1` | delete a group and all requests under it |
+| `:rengroup old new` | rename a group |
+| `:ls` | focus/refresh collections tree |
+| `:method POST` | set HTTP method |
+| `:set tok=abc123` | define a `{{tok}}` variable |
+| `:send` | send current request |
+| `:timeout 10s` | set request timeout |
+| `:tabnew name` / `:tabe name` | open saved request as a tab |
+| `:tabnext` / `:tabprevious` | switch request tabs |
+| `:tabclose` / `:tabonly` | close active tab / close all other tabs |
+| `:help` | help overlay |
+| `:q` · `:q!` | quit · force quit discarding unsaved changes |
+| `:wq` / `:x` | save current request, then quit |
+
+Unsaved edits are guarded when opening another request or quitting. Closing a
+dirty active tab asks for confirmation before discarding changes.
+
+## Storage and variables
+
+Saved requests live under Volley's user config directory:
 
 - Linux: `~/.config/volley/collections/`
 - macOS: `~/Library/Application Support/volley/collections/`
 - Windows: `%AppData%\\volley\\collections\\`
 
-Groups are folders: slash-separated names like `APISet1/auth/login` nest a
-request inside groups. Empty groups persist (they keep a `.keep` marker), while
-folders created implicitly by saving are cleaned up when their last request goes.
+Groups are folders. Slash-separated names like `APISet1/auth/login` create nested
+folders. Empty groups persist with a `.keep` marker.
 
-`{{name}}` placeholders in the URL, headers, params, auth fields, and body are
-expanded at send time — resolved from `:set` variables first, then process
-environment variables (so `{{HOME}}`, secrets exported in your shell, etc. work).
-Unresolved placeholders are surfaced in the status bar before the request is
-sent.
+`{{name}}` placeholders in URLs, headers, params, auth fields, and bodies are
+expanded at send time. Volley resolves `:set` variables first, then process
+environment variables. Unresolved placeholders are shown in the status bar before
+sending.
 
 ## Roadmap
 
-- [x] **Phase 1** — UI skeleton, panes, Vim modal core
-- [x] **Phase 2** — send request, render status + pretty-JSON response, Vim scroll
-- [x] **Phase 3** — request editor: tabbed headers / body / params / auth, Vim KV editor
-- [x] **Phase 4** — `:` command line, `/` response search, `y` yank, `?` help overlay
-- [x] **Vim editing engine** (`internal/vimtext`) — motions, operators, counts, undo/redo, in the body editor
-- [x] **Collections** — save/open/rename/copy/delete, NerdTree-style tree pane (native JSON storage)
-- [x] **Auth helpers** — Bearer, Basic, and API-key auth, injected at send time
-- [x] **curl import/export** — `:import curl …` and `:copy curl`
-- [x] **Request tabs** — open marked/tree-clicked saved requests as tabs, switch with `H`/`L`
-- [ ] **Tab safety + persistence** — guard dirty tree-click opens, show per-tab dirty state, restore tabs on restart
-- [ ] Load testing (concurrency, RPS, p50/p95/p99, live charts)
+- [x] UI skeleton, panes, Vim modal core
+- [x] Send request, render status + pretty JSON response, Vim scrolling
+- [x] Request editor: Headers / Body / Params / Auth
+- [x] Command line, response search, yank, help overlay
+- [x] Collections: save/open/rename/copy/delete, NerdTree-style tree pane
+- [x] Auth helpers: Bearer, Basic, API key
+- [x] curl import/export
+- [x] Request tabs
+- [x] JSON syntax highlighting for responses
+- [ ] Tab persistence and fuller per-tab dirty state
+- [ ] Environments and persisted variable scopes
+- [ ] Load testing: concurrency, RPS, p50/p95/p99, live charts
 
-> Note: collections are stored as native JSON under Volley's user config directory
-> (`~/.config/volley/collections/` on Linux, `~/Library/Application Support/volley/collections/` on macOS).
-> Posting-format import/export is not implemented yet; curl import/export is supported.
+> Note: collections are stored as native JSON. Posting/Postman/Bruno collection
+> import/export is not implemented yet; curl import/export is supported.

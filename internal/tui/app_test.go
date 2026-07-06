@@ -64,12 +64,13 @@ var (
 
 func TestFocusNavigation(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	if base.focus != focusURL {
-		t.Fatalf("initial focus = %v, want URL", base.focus)
+	if base.focus != focusCollection || base.urlInsert() {
+		t.Fatalf("initial focus/mode = %v/insert:%v, want Collections/NORMAL", base.focus, base.urlInsert())
 	}
+	urlBase := base.setFocus(focusURL)
 
 	// ctrl+w j moves down from URL directly into the request Body editor.
-	m := step(step(base, keyCtrlW), runes("j"))
+	m := step(step(urlBase, keyCtrlW), runes("j"))
 	if m.focus != focusRequest || m.reqPane.tab != tabBody {
 		t.Errorf("ctrl+w j: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
 	}
@@ -80,36 +81,36 @@ func TestFocusNavigation(t *testing.T) {
 	}
 
 	// ctrl+w h from the URL bar steps left onto the method selector; again to the tree.
-	if got := step(step(base, keyCtrlW), runes("h")).focus; got != focusMethod {
+	if got := step(step(urlBase, keyCtrlW), runes("h")).focus; got != focusMethod {
 		t.Errorf("ctrl+w h from URL: focus = %v, want Method", got)
 	}
-	if got := step(step(step(step(base, keyCtrlW), runes("h")), keyCtrlW), runes("h")).focus; got != focusCollection {
+	if got := step(step(step(step(urlBase, keyCtrlW), runes("h")), keyCtrlW), runes("h")).focus; got != focusCollection {
 		t.Errorf("ctrl+w h h from URL: focus = %v, want Collections", got)
 	}
 	// The URL bar types directly, so a left arrow moves the cursor rather than
 	// navigating — focus stays on the URL.
-	if got := step(base, tea.KeyMsg{Type: tea.KeyLeft}).focus; got != focusURL {
+	if got := step(urlBase, tea.KeyMsg{Type: tea.KeyLeft}).focus; got != focusURL {
 		t.Errorf("left arrow from URL: focus = %v, want URL (cursor move)", got)
 	}
 
 	// Arrow keys no longer hop panes: in the URL text field down/up are inert,
 	// so focus stays put. Pane moves are ctrl+w h/j/k/l or tab.
-	if got := step(base, keyDown).focus; got != focusURL {
+	if got := step(urlBase, keyDown).focus; got != focusURL {
 		t.Errorf("down arrow from URL should not change focus, got %v", got)
 	}
 	// Tab follows reading order: Collections, Method, URL, Request, Response.
 	// From URL, tab advances to Request; shift+tab steps back to Method.
-	if got := step(base, keyTab).focus; got != focusRequest {
+	if got := step(urlBase, keyTab).focus; got != focusRequest {
 		t.Errorf("tab from URL: focus = %v, want Request", got)
 	}
-	if got := step(step(base, keyTab), keyTab).focus; got != focusResponse {
+	if got := step(step(urlBase, keyTab), keyTab).focus; got != focusResponse {
 		t.Errorf("tab tab from URL: focus = %v, want Response", got)
 	}
-	if got := step(base, keyShiftTab).focus; got != focusMethod {
+	if got := step(urlBase, keyShiftTab).focus; got != focusMethod {
 		t.Errorf("shift+tab from URL: focus = %v, want Method", got)
 	}
 	// Bare keys no longer hop panes: j in the URL NORMAL sub-mode leaves focus put.
-	if got := step(urlNormal(base), runes("j")).focus; got != focusURL {
+	if got := step(urlNormal(urlBase), runes("j")).focus; got != focusURL {
 		t.Errorf("j from URL normal should not change focus, got %v", got)
 	}
 
@@ -117,6 +118,52 @@ func TestFocusNavigation(t *testing.T) {
 	m = step(step(base.setFocus(focusMethod), keyCtrlW), runes("j"))
 	if m.focus != focusRequest || m.reqPane.tab != tabBody {
 		t.Errorf("ctrl+w j from Method: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
+	}
+}
+
+func TestLeaderGShowsFocusHintsAndJumps(t *testing.T) {
+	m := urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
+	m = step(step(m, runes(",")), runes("g"))
+	if !m.focusHints {
+		t.Fatal(",g should enter focus-hint mode")
+	}
+	view := stripANSI(m.View())
+	for _, want := range []string{"1  COLLECTIONS", "2  GET", "3", "4   Headers", "5  RESPONSE"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("focus hint view missing %q in:\n%s", want, view)
+		}
+	}
+	m = step(m, runes("5"))
+	if m.focusHints || m.focus != focusResponse {
+		t.Fatalf("pressing 5 should focus response and leave hint mode, focus=%v hints=%v", m.focus, m.focusHints)
+	}
+}
+
+func TestLeaderGCancelsOnUnmappedKey(t *testing.T) {
+	m := urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
+	want := m.focus
+	m = step(step(step(m, runes(",")), runes("g")), runes("x"))
+	if m.focusHints {
+		t.Fatal("an unmapped key should leave focus-hint mode")
+	}
+	if m.focus != want {
+		t.Fatalf("a cancelled jump must not move focus, got %v want %v", m.focus, want)
+	}
+}
+
+func TestLeaderGRefusesHiddenTree(t *testing.T) {
+	// Below collectionsMinWidth the tree is hidden and focus is pulled off it.
+	m := step(New(), tea.WindowSizeMsg{Width: 80, Height: 40})
+	if m.collectionShown {
+		t.Fatalf("tree should be hidden at width 80")
+	}
+	want := m.focus
+	m = step(step(step(m, runes(",")), runes("g")), runes("1"))
+	if m.focusHints {
+		t.Fatal("jumping to the hidden tree should still leave hint mode")
+	}
+	if m.focus != want || !strings.Contains(m.statusMsg, "hidden") {
+		t.Fatalf("jump to hidden tree: focus=%v want=%v status=%q", m.focus, want, m.statusMsg)
 	}
 }
 
@@ -136,7 +183,7 @@ func TestArrowsNeverChangeFocus(t *testing.T) {
 	}
 
 	// Focus changes require tab or the ctrl+w chord — ctrl+w + arrow works.
-	m := step(step(base, keyCtrlW), keyDown)
+	m := step(step(base.setFocus(focusURL), keyCtrlW), keyDown)
 	if m.focus != focusRequest || m.reqPane.tab != tabBody {
 		t.Errorf("ctrl+w ↓ from URL: focus/tab = %v/%d, want Request/Body", m.focus, m.reqPane.tab)
 	}
@@ -167,12 +214,16 @@ func TestMethodPaneRKeyCyclesMethod(t *testing.T) {
 	}
 }
 
-func TestURLBarTypesDirectly(t *testing.T) {
+func TestURLBarStartsNormalAndEditsWithI(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	if base.focus != focusCollection || base.urlInsert() {
+		t.Fatalf("app should start in the tree and NORMAL mode, focus=%v insert=%v", base.focus, base.urlInsert())
+	}
 
-	// On launch the URL bar is ready for input — no 'i' needed.
+	// Focusing the URL bar enters insert mode so typing can start immediately there.
+	base = base.setFocus(focusURL)
 	if !base.urlInsert() {
-		t.Fatal("URL bar should accept typing immediately on launch")
+		t.Fatal("focusing URL should enter insert mode")
 	}
 	m := step(base, runes("https://api.test/x"))
 	if got := m.url.Text(); got != "https://api.test/x" {
@@ -220,14 +271,14 @@ func TestURLBarLongURLIndicators(t *testing.T) {
 
 	// Focused with the cursor at the end (scrolled right): leading ‹ for the
 	// hidden head.
-	f := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	f := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	f.url.SetText(long) // cursor at end
 	if got := f.renderURLField(width); !strings.Contains(got, "‹") {
 		t.Errorf("focused, scrolled right = %q, want a leading ‹", got)
 	}
 
 	// Focused with the cursor at column 0: trailing › for the hidden tail.
-	f2 := urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
+	f2 := urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL))
 	f2.url.SetText(long)
 	f2 = step(f2, runes("0")) // jump to the start in NORMAL
 	if got := f2.renderURLField(width); !strings.Contains(got, "›") {
@@ -238,7 +289,7 @@ func TestURLBarLongURLIndicators(t *testing.T) {
 // TestURLNormalModeVimEdits exercises real Vim editing in the URL bar's NORMAL
 // sub-mode: motions, delete, change-to-end, paste, and undo.
 func TestURLNormalModeVimEdits(t *testing.T) {
-	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	m := step(base, runes("https://api.test/oldpath"))
 	m = urlNormal(m) // drop to NORMAL (cursor on last char)
 
@@ -276,7 +327,7 @@ func TestURLNormalModeVimEdits(t *testing.T) {
 
 // TestURLNormalWordDeleteAndPaste covers b/w word motion, dw, and p.
 func TestURLNormalWordDeleteAndPaste(t *testing.T) {
-	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	m := urlNormal(step(base, runes("alpha beta")))
 
 	// b moves back to the start of "beta"; dw deletes the word (register holds it).
@@ -299,7 +350,7 @@ func TestTimeoutEditableInline(t *testing.T) {
 	// Timeout is no longer a pane/tab stop: the ,t leader jumps straight to
 	// editing the inline field, without moving focus off the URL bar. (URL
 	// NORMAL mode itself is now pure Vim, so t is free for motions.)
-	m := step(step(urlNormal(base), runes(",")), runes("t"))
+	m := step(step(urlNormal(base.setFocus(focusURL)), runes(",")), runes("t"))
 	if !m.timeoutInput.Focused() || !m.editing() {
 		t.Fatalf(",t should begin editing the timeout, focused=%v editing=%v",
 			m.timeoutInput.Focused(), m.editing())
@@ -470,7 +521,7 @@ func TestClickIgnoredWhileModalOpen(t *testing.T) {
 	x, y := findInView(m, "GET")
 	m.showHelp = true
 	got, cmd := m.handleClick(clickAt(x, y))
-	if got.(Model).focus != focusURL || got.(Model).req.Method != "GET" || cmd != nil {
+	if got.(Model).focus != focusCollection || got.(Model).req.Method != "GET" || cmd != nil {
 		t.Error("a click while help is open must be ignored")
 	}
 }
@@ -840,7 +891,7 @@ func TestImportCurlCommand(t *testing.T) {
 }
 
 func TestImportCurlGuardsUnsavedEdits(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	m = step(m, runes("https://existing.test")) // dirty the buffer
 
 	tm, _ := m.executeCommand("import curl https://new.test")
@@ -924,7 +975,7 @@ func TestDocNameAndDirtyIndicator(t *testing.T) {
 	}
 
 	// Editing the URL marks the buffer dirty.
-	m := step(base, runes("https://x.test"))
+	m := step(base.setFocus(focusURL), runes("https://x.test"))
 	if !strings.Contains(m.View(), "[+]") {
 		t.Errorf("an edited buffer should show the [+] dirty marker")
 	}
@@ -1032,9 +1083,9 @@ func TestRequestEditorBuildsHeaders(t *testing.T) {
 }
 
 func TestRequestTabsReachableFromURLFocus(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	if m.focus != focusURL {
-		t.Fatalf("initial focus = %v, want URL", m.focus)
+		t.Fatalf("focus = %v, want URL", m.focus)
 	}
 
 	m = step(urlNormal(m), runes("]"))
@@ -1042,7 +1093,7 @@ func TestRequestTabsReachableFromURLFocus(t *testing.T) {
 		t.Fatalf("] from URL normal focus = focus %v tab %d, want Request/Body", m.focus, m.reqPane.tab)
 	}
 
-	m = step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
 	m = step(urlNormal(m), runes("["))
 	if m.focus != focusRequest || m.reqPane.tab != tabAuth {
 		t.Fatalf("[ from URL normal focus = focus %v tab %d, want Request/Auth (last tab)", m.focus, m.reqPane.tab)
@@ -1313,13 +1364,12 @@ func TestToggleCollectionTree(t *testing.T) {
 func TestRenderLifecycle(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	// The URL bar accepts typing on launch, so the mode tag starts at INSERT;
-	// esc drops it to NORMAL.
-	if out := m.View(); !strings.Contains(out, "INSERT") {
-		t.Error("status bar should show INSERT mode while the URL bar is active")
+	// The app starts in NORMAL mode; i enters URL insert mode.
+	if out := m.View(); !strings.Contains(out, "NORMAL") {
+		t.Error("status bar should show NORMAL mode on launch")
 	}
-	if out := urlNormal(m).View(); !strings.Contains(out, "NORMAL") {
-		t.Error("status bar should show NORMAL mode after esc")
+	if out := m.setFocus(focusURL).View(); !strings.Contains(out, "INSERT") {
+		t.Error("status bar should show INSERT mode after focusing URL")
 	}
 
 	// A completed JSON response should render its status and pretty body.
@@ -1340,7 +1390,7 @@ func TestRenderLifecycle(t *testing.T) {
 }
 
 func TestMethodCycle(t *testing.T) {
-	m := step(New(), tea.WindowSizeMsg{Width: 80, Height: 24})
+	m := step(New(), tea.WindowSizeMsg{Width: 80, Height: 24}).setFocus(focusURL)
 	if m.req.Method != "GET" {
 		t.Fatalf("default method = %q", m.req.Method)
 	}

@@ -109,6 +109,8 @@ Where a Vim TUI can feel *faster* than the GUIs.
   - **Why:** neither Postman nor Bruno does this; k6/vegeta aren't interactive.
         This is Volley's signature feature — and generate-from-request +
         comparison are what make it a *workflow*, not just a dashboard.
+- [x] **Numbered pane jump (` ,g`)** — EasyMotion-style focus hints over the
+      panes; press the shown number to jump directly. **Effort: S.**
 - [ ] **Fuzzy quick-open / command palette (`ctrl+p`)** — Telescope-style
       incremental finder over saved requests, and extend the same picker to
       commands, environments, and variables. **Why:** big trees are slow to
@@ -129,8 +131,9 @@ Where a Vim TUI can feel *faster* than the GUIs.
         P2 Network options.
   - a **rate-limit helper**: on `429`, surface reset time from
         `Retry-After` / `X-RateLimit-*` headers.
-  - syntax highlighting for the response body (reuse the JSON highlighter; add
-        XML/HTML).
+  - _Done:_ JSON syntax highlighting for the response body reuses the request
+        body highlighter.
+  - add XML/HTML syntax highlighting.
   **Why:** Postman's response inspector, but terminal-native. **Effort: M.**
 - [ ] **Save response to file / yank path** — `:w response.json`, and
       `:extract`-style copy of a JSONPath value to the clipboard. Complements the
@@ -159,11 +162,30 @@ Where a Vim TUI can feel *faster* than the GUIs.
 
 ## P2 — Polish, interop & power features
 
-- [ ] **Config file + theming** — `~/.config/volley/config.toml` for palette
-      (the colors are hardcoded with a "theming is a later, central change"
-      note), default timeout, redirect policy, keybindings. Ship a light and a
-      dark theme. **Why:** GUIs are themeable; TUIs should be too. **Effort: M.**
-- [ ] **Configurable keybindings** — remap the Vim bindings via config. **M.**
+- [ ] **`:config` command + config file** — add an in-app configuration command
+      backed by `~/.config/volley/config.toml`. It should let users inspect and
+      change settings without hand-editing TOML, e.g. `:config theme dark`,
+      `:config collections.dir ~/api`, `:config timeout 10s`,
+      `:config editor nvim`, `:config get`, and `:config reset <key>`. Persist
+      changes atomically and reload affected UI/runtime settings immediately
+      where possible. **Why:** users should be able to customize Volley from
+      inside Volley. **Effort: M.**
+  - [ ] **Theme configuration** — palette/theme name, with bundled dark/light
+        themes and a future path for custom colors.
+  - [ ] **Request save directory** — configurable collections root, including
+        validation, migration guidance, and tree reload after change.
+  - [ ] **Runtime defaults** — default timeout, redirect policy, raw/pretty
+        response preference, startup focus/mode, and tab/session restore.
+  - [ ] **Configurable keybindings** — remap Vim bindings via config once the
+        config layer exists. **M.**
+- [ ] **`:editor` command / external editor integration** — _partial:_
+      `:editor` opens the current request as JSON and `:editor <request-name>`
+      opens a named saved request in `$VISUAL` or `$EDITOR`, suspends Bubble Tea
+      with `tea.ExecProcess`, and reloads/saves edits when the editor exits.
+      Remaining work: support `:config editor`, YAML, focused-section editing
+      (`body`, `headers`, `params`, `auth`), friendlier structured validation,
+      and richer dirty/conflict handling. **Why:** large bodies and complex
+      requests are easier in a real editor. **Effort: M.**
 - [ ] **Import/export & code-gen** — OpenAPI → collection, Postman/Insomnia/Bruno
       import, and `.http`/`.rest` (VS Code REST Client) read/write — the last is
       very git-diff-friendly and popular. Code generation to curl/httpie/fetch.

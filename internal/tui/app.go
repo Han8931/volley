@@ -100,7 +100,8 @@ type Model struct {
 	pendingG    bool   // for the "gg" motion in the response viewport
 
 	pendingWindow bool // for the "ctrl+w <hjkl>" window-navigation chord
-	pendingComma  bool // for leader-style commands, currently ",n" tree toggle
+	pendingComma  bool // for leader-style commands: ",n" tree toggle, ",g" focus hints
+	focusHints    bool // awaiting a numeric pane target after ",g"
 
 	// Swallows terminal-injected vertical navigation keys that can accompany
 	// wheel mouse events, keeping other panes still while the response scrolls.
@@ -159,12 +160,11 @@ const urlPlaceholder = "https://api.example.com/v1/ping"
 
 // New builds the root model with a blank request ready to edit.
 func New() Model {
-	// The URL bar is a single-line vim buffer; it starts in Insert so the bar
-	// accepts typing immediately on launch (focus defaults to focusURL). It is
-	// held by value so each Model copy owns its own URL state (matching the old
-	// textinput and the branch-and-reuse the tests rely on).
+	// The URL bar is a single-line vim buffer. It starts in Normal mode so the app
+	// opens in a Vim-like command/navigation state; press i/a (or click the URL) to
+	// enter text. It is held by value so each Model copy owns its own URL state.
 	urlBuf := vimtext.New("", true)
-	urlBuf.SetMode(vimtext.Insert)
+	urlBuf.SetMode(vimtext.Normal)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -201,6 +201,7 @@ func New() Model {
 		collectionPref:  true,
 		vars:            vars.New(),
 	}
+	m = m.setFocus(focusCollection)
 	if listErr != nil {
 		m.statusMsg = "failed to load collections: " + listErr.Error()
 	}
@@ -301,6 +302,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingAction != pendingNone {
 			return m.resolveSaveConfirm(msg)
 		}
+		if m.focusHints {
+			return m.resolveFocusHint(msg), nil
+		}
 		if m.cmdActive {
 			return m.updateCommandLine(msg)
 		}
@@ -311,6 +315,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.routeEditing(msg)
 		}
 		return m.updateNormal(msg)
+
+	case editorFinishedMsg:
+		return m.applyEditorResult(msg)
 
 	case responseMsg:
 		if msg.seq != m.sendSeq {
@@ -324,7 +331,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.respText = renderResponseBody(msg.resp, m.vp.Width, m.rawBody)
 		m.respHeaders = renderResponseHeaders(msg.resp)
 		m.searchQuery, m.searchHits, m.searchIdx = "", nil, 0
-		m.vp.SetContent(m.currentResponseText())
+		m.vp.SetContent(m.currentResponseViewText())
 		m.vp.GotoTop()
 		return m, nil
 
@@ -400,6 +407,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.toggleCollectionPane(), nil
 		case "t":
 			return m.beginEditTimeout(), textinput.Blink
+		case "g":
+			m.focusHints = true
+			m.statusMsg = "jump to pane: 1 tree · 2 method · 3 url · 4 request · 5 response"
+			return m, nil
 		}
 		return m, nil
 	}
@@ -457,7 +468,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ",":
 		m.pendingComma = true
-		m.statusMsg = "leader: n toggle tree · t edit timeout"
+		m.statusMsg = "leader: n toggle tree · t edit timeout · g jump pane"
 		return m, nil
 	case "tab":
 		return m.cycleFocus(1), nil
@@ -491,6 +502,29 @@ func (m Model) beginEditTimeout() Model {
 	m.timeoutInput.Focus()
 	m.timeoutInput.CursorEnd()
 	return m
+}
+
+func (m Model) resolveFocusHint(msg tea.KeyMsg) Model {
+	m.focusHints = false
+	switch msg.String() {
+	case "1":
+		if !m.collectionShown {
+			m.statusMsg = "collections tree is hidden"
+			return m
+		}
+		return m.setFocus(focusCollection)
+	case "2":
+		return m.setFocus(focusMethod)
+	case "3":
+		return m.setFocus(focusURL)
+	case "4":
+		return m.setFocus(focusRequest)
+	case "5":
+		return m.setFocus(focusResponse)
+	default:
+		m.statusMsg = "pane jump cancelled"
+		return m
+	}
 }
 
 // updateMethodNormal handles keys while the standalone method selector is
@@ -824,7 +858,7 @@ func (m Model) handleMouseUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleClick(msg)
 	}
 	m.selecting = false
-	m.vp.SetContent(m.currentResponseText()) // drop the highlight either way
+	m.vp.SetContent(m.currentResponseViewText()) // drop the selection highlight either way
 	if !m.selDragged {
 		return m.handleClick(msg) // it was a click, not a drag
 	}
@@ -1160,7 +1194,7 @@ func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.rawBody = !m.rawBody
 			m.respText = renderResponseBody(m.resp, m.vp.Width, m.rawBody)
 			m.resetSearch()
-			m.vp.SetContent(m.currentResponseText())
+			m.vp.SetContent(m.currentResponseViewText())
 			m.vp.GotoTop()
 		}
 		return m, nil
@@ -1307,6 +1341,13 @@ func (m Model) currentResponseText() string {
 		return m.respHeaders
 	}
 	return m.respText
+}
+
+func (m Model) currentResponseViewText() string {
+	if m.respTab == 1 {
+		return m.respHeaders
+	}
+	return highlightResponseText(m.respText)
 }
 
 // rawRequest assembles the current edits into a Request WITHOUT expanding

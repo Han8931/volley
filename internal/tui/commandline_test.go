@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +13,7 @@ import (
 )
 
 func sized() Model {
-	// The URL bar types directly (so ':' and '?' are URL characters there);
-	// drop to its NORMAL sub-mode so these ex-command tests can reach ':'/'?'.
-	return urlNormal(step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}))
+	return step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 }
 
 func TestCommandSetMethod(t *testing.T) {
@@ -29,6 +29,175 @@ func TestCommandSetMethod(t *testing.T) {
 	}
 	if m.req.Method != "POST" {
 		t.Errorf("method = %q, want POST", m.req.Method)
+	}
+}
+
+func TestEditorCommandRequiresEditorEnv(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+	m := sized()
+	next, cmd := m.executeCommand("editor")
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal(":editor without env should not spawn a command")
+	}
+	if !strings.Contains(m.statusMsg, "VISUAL") || !strings.Contains(m.statusMsg, "EDITOR") {
+		t.Fatalf("status = %q, want editor env hint", m.statusMsg)
+	}
+}
+
+func TestEditorRequestRoundTrip(t *testing.T) {
+	m := sized()
+	m.req = model.Request{Method: "POST", URL: "https://old.test", Body: "old", Timeout: 2 * time.Second}
+	m.url.SetText(m.req.URL)
+	m.timeout = m.req.Timeout
+	m.reqPane.setBodyText(m.req.Body)
+	initial, err := editorInitialContent(m.rawRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(initial, `"method": "POST"`) || !strings.Contains(initial, `"timeout": "2s"`) {
+		t.Fatalf("request editor JSON missing fields:\n%s", initial)
+	}
+	// A request with no auth helper must not emit an "auth" block, matching the
+	// on-disk storage shape.
+	if strings.Contains(initial, `"auth"`) {
+		t.Fatalf("no-auth request should omit the auth block:\n%s", initial)
+	}
+
+	path := t.TempDir() + "/request.json"
+	edited := `{
+  "method": "put",
+  "url": "https://new.test",
+  "headers": [{"name":"X-Test","value":"yes","enabled":true}],
+  "query": [{"key":"q","value":"1","enabled":true}],
+  "body": "edited body",
+  "timeout": "5s"
+}`
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := m.baseline
+	next, _ := m.applyEditorResult(editorFinishedMsg{path: path})
+	m = next.(Model)
+	if m.req.Method != "PUT" || m.url.Text() != "https://new.test" || m.reqPane.bodyOut() != "edited body" || m.timeout != 5*time.Second {
+		t.Fatalf("request not applied: method=%q url=%q body=%q timeout=%s", m.req.Method, m.url.Text(), m.reqPane.bodyOut(), m.timeout)
+	}
+	gotH := m.reqPane.headersOut()
+	if len(gotH) != 1 || gotH[0] != (model.Header{Name: "X-Test", Value: "yes", Enabled: true}) {
+		t.Fatalf("header did not round-trip through the editor: %+v", gotH)
+	}
+	gotQ := m.reqPane.queryOut()
+	if len(gotQ) != 1 || gotQ[0] != (model.KV{Key: "q", Value: "1", Enabled: true}) {
+		t.Fatalf("query did not round-trip through the editor: %+v", gotQ)
+	}
+	if !requestsEqual(m.baseline, base) || !m.dirty() {
+		t.Fatal("request editor changes should preserve baseline and mark request dirty")
+	}
+}
+
+// TestEditorAuthRoundTrip covers the pointer-based auth block: a request with a
+// Bearer helper must emit a lowercase auth block and parse cleanly back.
+func TestEditorAuthRoundTrip(t *testing.T) {
+	req := model.Request{
+		Method: "GET",
+		URL:    "https://api.test",
+		Auth:   model.Auth{Type: model.AuthBearer, Token: "secret"},
+	}
+	initial, err := editorInitialContent(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(initial, `"type": "bearer"`) || !strings.Contains(initial, `"token": "secret"`) {
+		t.Fatalf("auth block missing or mis-cased:\n%s", initial)
+	}
+	back, err := parseEditedRequest([]byte(initial))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Auth != req.Auth {
+		t.Fatalf("auth did not round-trip: got %+v want %+v", back.Auth, req.Auth)
+	}
+}
+
+func TestEditorNamedRequestSavesAndLoadsTarget(t *testing.T) {
+	m := sized()
+	m.collectionStore.Root = t.TempDir()
+	if err := m.collectionStore.Save("target", model.Request{Method: "GET", URL: "https://old.test"}); err != nil {
+		t.Fatal(err)
+	}
+	path := t.TempDir() + "/request.json"
+	edited := `{"method":"POST","url":"https://target.test","body":"saved"}`
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := m.applyEditorResult(editorFinishedMsg{path: path, targetName: "target"})
+	m = next.(Model)
+	if m.currentName != "target" || m.req.Method != "POST" || m.url.Text() != "https://target.test" || m.reqPane.bodyOut() != "saved" {
+		t.Fatalf("named editor should save+load target, current=%q method=%q url=%q body=%q", m.currentName, m.req.Method, m.url.Text(), m.reqPane.bodyOut())
+	}
+	if m.dirty() {
+		t.Fatal("saved target should be clean after editor result")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("temp file should be removed, stat err=%v", err)
+	}
+}
+
+// TestEditorRejectsBadContent covers the failure branches of applyEditorResult:
+// a garbled buffer, an empty buffer, and an unknown method must all be reported
+// without mutating the in-progress request, and the temp file is still removed.
+func TestEditorRejectsBadContent(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, wantStatus string
+	}{
+		{"invalid json", `{not json`, "parse failed"},
+		{"empty file", ``, "parse failed"},
+		{"unknown method", `{"method":"FLY","url":"https://x.test"}`, "parse failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sized()
+			m.req = model.Request{Method: "GET", URL: "https://keep.test"}
+			m.url.SetText(m.req.URL)
+			path := t.TempDir() + "/request.json"
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			next, _ := m.applyEditorResult(editorFinishedMsg{path: path})
+			m = next.(Model)
+			if !strings.Contains(m.statusMsg, tc.wantStatus) {
+				t.Fatalf("status = %q, want it to contain %q", m.statusMsg, tc.wantStatus)
+			}
+			if m.req.Method != "GET" || m.url.Text() != "https://keep.test" {
+				t.Fatalf("a rejected edit must not touch the request: method=%q url=%q", m.req.Method, m.url.Text())
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("temp file should be removed even on failure, stat err=%v", err)
+			}
+		})
+	}
+}
+
+// TestEditorProcessErrorIsReported covers the editor exiting non-zero: the
+// request is left untouched, the error is surfaced, and the temp file cleaned up.
+func TestEditorProcessErrorIsReported(t *testing.T) {
+	m := sized()
+	m.req = model.Request{Method: "GET", URL: "https://keep.test"}
+	m.url.SetText(m.req.URL)
+	path := t.TempDir() + "/request.json"
+	if err := os.WriteFile(path, []byte(`{"method":"POST"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := m.applyEditorResult(editorFinishedMsg{path: path, err: fmt.Errorf("exit status 1")})
+	m = next.(Model)
+	if !strings.Contains(m.statusMsg, "editor failed") {
+		t.Fatalf("status = %q, want editor-failed report", m.statusMsg)
+	}
+	if m.req.Method != "GET" {
+		t.Fatalf("a failed editor must not touch the request, method=%q", m.req.Method)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("temp file should be removed after a failed editor, stat err=%v", err)
 	}
 }
 

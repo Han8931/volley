@@ -85,6 +85,17 @@ func renderResponseBody(resp model.Response, width int, raw bool) string {
 	return out
 }
 
+func highlightResponseText(text string) string {
+	if !isLikelyJSONBody(text) {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = highlightJSONLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // prettyJSON indents b when it is valid JSON.
 func prettyJSON(b []byte) ([]byte, bool) {
 	trimmed := bytes.TrimSpace(b)

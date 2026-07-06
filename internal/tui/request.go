@@ -114,6 +114,13 @@ func (p requestPane) queryOut() []model.KV       { return p.query.Rows() }
 func (p requestPane) bodyOut() string            { return p.body.Text() }
 func (p requestPane) authOut() model.Auth        { return p.auth.Auth() }
 
+func (p *requestPane) setBodyText(text string) {
+	p.body = vimtext.New(text, false)
+	p.body.SetMode(vimtext.Normal)
+	p.bodyActive = false
+	p.bodyScroll = 0
+}
+
 func (p *requestPane) setRequest(req model.Request) {
 	headerRows := make([]model.KV, 0, len(req.Headers))
 	for _, h := range req.Headers {
@@ -122,10 +129,7 @@ func (p *requestPane) setRequest(req model.Request) {
 	p.headers.SetRows(headerRows)
 	p.query.SetRows(req.Query)
 	p.auth.SetAuth(req.Auth)
-	p.body = vimtext.New(req.Body, false)
-	p.body.SetMode(vimtext.Normal)
-	p.bodyActive = false
-	p.bodyScroll = 0
+	p.setBodyText(req.Body)
 	p.selectTab(tabHeaders)
 }
 
@@ -236,9 +240,13 @@ func (p *requestPane) adjustBodyScroll() {
 	}
 }
 
-func (p requestPane) view() string {
+func (p requestPane) view(hints ...string) string {
+	hint := ""
+	if len(hints) > 0 && hints[0] != "" {
+		hint = focusHintBadge(hints[0]) + " "
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		p.tabBar(),
+		hint+p.tabBar(),
 		"",
 		p.tabContent(),
 	)

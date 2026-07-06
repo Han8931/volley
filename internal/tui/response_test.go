@@ -39,6 +39,17 @@ func TestRenderStatusSummaryTiers(t *testing.T) {
 	}
 }
 
+func TestResponseJSONSyntaxHighlight(t *testing.T) {
+	plain := "{\n  \"ok\": true,\n  \"n\": 2\n}"
+	highlighted := highlightResponseText(plain)
+	if got := stripANSI(highlighted); got != plain {
+		t.Fatalf("highlighting changed visible text:\n%s", got)
+	}
+	if got := highlightResponseText("hello"); got != "hello" {
+		t.Fatalf("non-JSON response should not be highlighted, got %q", got)
+	}
+}
+
 func TestSendingKeepsPreviousResponseVisible(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.hasResp = true
