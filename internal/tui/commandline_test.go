@@ -65,15 +65,17 @@ func TestEditorRequestRoundTrip(t *testing.T) {
 		t.Fatalf("no-auth request should omit the auth block:\n%s", initial)
 	}
 
-	path := t.TempDir() + "/request.json"
+	path := t.TempDir() + "/request.txt"
 	edited := `{
   "method": "put",
   "url": "https://new.test",
   "headers": [{"name":"X-Test","value":"yes","enabled":true}],
   "query": [{"key":"q","value":"1","enabled":true}],
-  "body": "edited body",
   "timeout": "5s"
-}`
+}
+
+` + editorBodyMarker + `
+edited body`
 	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +122,51 @@ func TestEditorAuthRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEditorMultilineBodyRoundTrip is the whole point of the raw-body section:
+// a multi-line payload must appear verbatim in the editor document (not
+// flattened into one escaped JSON string) and survive the round-trip intact.
+func TestEditorMultilineBodyRoundTrip(t *testing.T) {
+	body := "{\n  \"name\": \"alice\",\n  \"nested\": {\n    \"a\": 1\n  }\n}"
+	req := model.Request{Method: "POST", URL: "https://api.test", Body: body}
+	initial, err := editorInitialContent(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(initial, body) {
+		t.Fatalf("body should appear verbatim in the editor document:\n%s", initial)
+	}
+	if strings.Contains(initial, `\n`) {
+		t.Fatalf("body must not be JSON-escaped onto one line:\n%s", initial)
+	}
+	back, err := parseEditedRequest([]byte(initial))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Body != body {
+		t.Fatalf("body did not round-trip:\ngot  %q\nwant %q", back.Body, body)
+	}
+}
+
+// TestEditorMissingBodyMarkerIsLenient: if the user deletes the marker line, the
+// document is treated as metadata-only with an empty body rather than erroring.
+func TestEditorMissingBodyMarkerIsLenient(t *testing.T) {
+	req, err := parseEditedRequest([]byte(`{"method":"GET","url":"https://x.test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Body != "" || req.URL != "https://x.test" {
+		t.Fatalf("metadata-only edit: body=%q url=%q", req.Body, req.URL)
+	}
+}
+
 func TestEditorNamedRequestSavesAndLoadsTarget(t *testing.T) {
 	m := sized()
 	m.collectionStore.Root = t.TempDir()
 	if err := m.collectionStore.Save("target", model.Request{Method: "GET", URL: "https://old.test"}); err != nil {
 		t.Fatal(err)
 	}
-	path := t.TempDir() + "/request.json"
-	edited := `{"method":"POST","url":"https://target.test","body":"saved"}`
+	path := t.TempDir() + "/request.txt"
+	edited := "{\"method\":\"POST\",\"url\":\"https://target.test\"}\n\n" + editorBodyMarker + "\nsaved"
 	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}

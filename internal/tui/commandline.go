@@ -419,7 +419,7 @@ func (m Model) openExternalEditor(name string) (tea.Model, tea.Cmd) {
 		}
 		req = loaded
 	}
-	f, err := os.CreateTemp("", "volley-request-*.json")
+	f, err := os.CreateTemp("", "volley-request-*.txt")
 	if err != nil {
 		m.statusMsg = "editor failed: " + err.Error()
 		return m, nil
@@ -450,22 +450,34 @@ func (m Model) openExternalEditor(name string) (tea.Model, tea.Cmd) {
 	})
 }
 
-// editableRequest is the JSON a user sees and edits via :editor. It mirrors the
-// on-disk storage shape (lowercase keys, an omitted-when-empty auth block) so
-// the two hand-editable forms read consistently, and — like the storage DTO —
-// keeps format concerns out of the domain model.Request. It lives only in a
-// temp file for one round-trip, so it has no persisted-schema compatibility to
-// honor. json.Unmarshal matches these tags case-insensitively, so a stray
-// "Name"/"URL" from the user still parses.
+// editableRequest is the metadata block of the :editor document — everything
+// except the body. It mirrors the on-disk storage shape (lowercase keys, an
+// omitted-when-empty auth block) so the two hand-editable forms read
+// consistently, and — like the storage DTO — keeps format concerns out of the
+// domain model.Request. It lives only in a temp file for one round-trip, so it
+// has no persisted-schema compatibility to honor. json.Unmarshal matches these
+// tags case-insensitively, so a stray "Name"/"URL" from the user still parses.
+//
+// The body is deliberately NOT a field here: embedding it as a JSON string
+// flattens a multi-line payload into one escaped line, which is miserable to
+// edit — the exact thing :editor exists to make easy. Instead the document is a
+// JSON metadata block, the editorBodyMarker line, then the raw body verbatim.
 type editableRequest struct {
 	Method  string           `json:"method"`
 	URL     string           `json:"url"`
 	Headers []editableHeader `json:"headers,omitempty"`
 	Query   []editableKV     `json:"query,omitempty"`
-	Body    string           `json:"body,omitempty"`
 	Auth    *editableAuth    `json:"auth,omitempty"`
 	Timeout string           `json:"timeout,omitempty"`
 }
+
+// editorBodyMarker separates the JSON metadata block from the raw request body
+// in the :editor document. Everything on the lines after it is the body, sent
+// verbatim. splitEditorContent matches it by prefix so trimming the trailing
+// hint text doesn't break parsing.
+const editorBodyMarker = "===== request body (keep this line; text below is sent verbatim) ====="
+
+const editorBodyMarkerPrefix = "===== request body"
 
 type editableHeader struct {
 	Name    string `json:"name"`
@@ -494,14 +506,37 @@ func editorInitialContent(req model.Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(b) + "\n", nil
+	var sb strings.Builder
+	sb.Write(b)
+	sb.WriteString("\n\n")
+	sb.WriteString(editorBodyMarker)
+	sb.WriteString("\n")
+	sb.WriteString(req.Body)
+	sb.WriteString("\n")
+	return sb.String(), nil
+}
+
+// splitEditorContent divides an edited document into its JSON metadata block and
+// the raw body below the marker. A missing marker (the user deleted it) is
+// treated leniently as metadata-only with an empty body rather than an error.
+func splitEditorContent(s string) (meta, body string) {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), editorBodyMarkerPrefix) {
+			meta = strings.Join(lines[:i], "\n")
+			// Drop the single trailing newline editorInitialContent appends, so a
+			// round-trip with no edits preserves the body byte-for-byte.
+			body = strings.TrimSuffix(strings.Join(lines[i+1:], "\n"), "\n")
+			return meta, body
+		}
+	}
+	return s, ""
 }
 
 func editableFromRequest(req model.Request) editableRequest {
 	out := editableRequest{
 		Method: req.Method,
 		URL:    req.URL,
-		Body:   req.Body,
 	}
 	for _, h := range req.Headers {
 		out.Headers = append(out.Headers, editableHeader{Name: h.Name, Value: h.Value, Enabled: h.Enabled})
@@ -527,8 +562,9 @@ func editableFromRequest(req model.Request) editableRequest {
 }
 
 func parseEditedRequest(b []byte) (model.Request, error) {
+	meta, body := splitEditorContent(string(b))
 	var in editableRequest
-	if err := json.Unmarshal(b, &in); err != nil {
+	if err := json.Unmarshal([]byte(meta), &in); err != nil {
 		return model.Request{}, err
 	}
 	method := strings.ToUpper(strings.TrimSpace(in.Method))
@@ -541,7 +577,7 @@ func parseEditedRequest(b []byte) (model.Request, error) {
 	req := model.Request{
 		Method: method,
 		URL:    strings.TrimSpace(in.URL),
-		Body:   in.Body,
+		Body:   body,
 	}
 	for _, h := range in.Headers {
 		req.Headers = append(req.Headers, model.Header{Name: h.Name, Value: h.Value, Enabled: h.Enabled})
