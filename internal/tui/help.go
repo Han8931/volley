@@ -20,7 +20,7 @@ var helpSections = []struct {
 	}},
 	{"Tabs (open saved requests)", [][2]string{
 		{"T (in tree)", "open marked requests (or the one under the cursor) as tabs — adds to the open set"},
-		{"H / L  ·  click", "switch to the previous / next tab"},
+		{"H / L  ·  click", "switch tabs — each keeps its own edits (● marks unsaved)"},
 		{"click ✕  ·  ctrl+w q", "close a tab with the mouse  ·  close the active tab"},
 		{":tabnew <name>  ·  :tabonly", "open a saved request in a tab  ·  close all others"},
 	}},

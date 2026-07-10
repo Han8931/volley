@@ -154,10 +154,13 @@ p                   toggle raw/pretty JSON response
 | `:tabclose` / `:tabonly` | close active tab / close all other tabs |
 | `:help` | help overlay |
 | `:q` · `:q!` | quit · force quit discarding unsaved changes |
-| `:wq` / `:x` | save current request, then quit |
+| `:wq` / `:x` | save unsaved changes in every tab, then quit |
 
-Unsaved edits are guarded when opening another request or quitting. Closing a
-dirty active tab asks for confirmation before discarding changes.
+Each tab is a live in-memory buffer: switching tabs preserves that tab's unsaved
+edits (no save-first prompt, no disk reload), and a tab with unsaved changes
+shows a `●` marker in the tabline. Closing a dirty tab asks for confirmation
+before discarding. Unsaved edits are still guarded when opening another request
+into the current tab, or when quitting — dirty background tabs included.
 
 ## Storage and variables
 
@@ -184,9 +187,9 @@ sending.
 - [x] Collections: save/open/rename/copy/delete, NerdTree-style tree pane
 - [x] Auth helpers: Bearer, Basic, API key
 - [x] curl import/export
-- [x] Request tabs
+- [x] Request tabs (per-tab in-memory buffers with their own dirty state)
 - [x] JSON syntax highlighting for responses
-- [ ] Tab persistence and fuller per-tab dirty state
+- [ ] Tab session persistence across restarts
 - [ ] Environments and persisted variable scopes
 - [ ] Load testing: concurrency, RPS, p50/p95/p99, live charts
 

@@ -102,7 +102,7 @@ type treeState struct {
 	collectionShown bool     // effective tree visibility: the preference, gated by width
 	collectionPref  bool     // user's show/hide preference, restored when the window is wide enough
 	collectionWide  bool     // NerdTree-style zoom: widen the tree so long request names are visible
-	openTabs        []string // saved requests opened as tabs from the tree
+	tabs            []tabBuf // open request tabs, each a live in-memory editor buffer
 	activeTab       int
 }
 
@@ -479,11 +479,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "H":
 		// H/L walk the open request tabs from any pane. The request pane's own
 		// Headers/Body/Params sub-tabs stay reachable via [ / ] once tabs are open.
-		if len(m.openTabs) > 0 {
+		if len(m.tabs) > 0 {
 			return m.switchOpenTab(-1)
 		}
 	case "L":
-		if len(m.openTabs) > 0 {
+		if len(m.tabs) > 0 {
 			return m.switchOpenTab(1)
 		}
 	case "?":
@@ -1085,7 +1085,7 @@ func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
 // anywhere else on it switches to it. The tabline starts at the left edge of the
 // right-hand column, so hit-testing begins at rightX.
 func (m Model) clickOpenTab(x, rightX int) (tea.Model, tea.Cmd) {
-	idx, onClose, ok := openTabHit(x, rightX, m.openTabs)
+	idx, onClose, ok := openTabHit(x, rightX, m.tabLabels())
 	if !ok {
 		return m, nil
 	}
@@ -1096,35 +1096,38 @@ func (m Model) clickOpenTab(x, rightX int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) switchOpenTab(delta int) (tea.Model, tea.Cmd) {
-	if len(m.openTabs) == 0 {
+	if len(m.tabs) == 0 {
 		return m, nil
 	}
-	idx := (m.activeTab + delta + len(m.openTabs)) % len(m.openTabs)
+	idx := (m.activeTab + delta + len(m.tabs)) % len(m.tabs)
 	return m.switchOpenTabTo(idx)
 }
 
+// switchOpenTabTo activates tab idx. The outgoing tab's live edits are captured
+// into its buffer and the incoming tab's edits restored, so switching never
+// blocks on unsaved changes and never reloads from disk — each tab keeps its own
+// in-flight work.
 func (m Model) switchOpenTabTo(idx int) (tea.Model, tea.Cmd) {
-	if idx < 0 || idx >= len(m.openTabs) || idx == m.activeTab {
+	if idx < 0 || idx >= len(m.tabs) || idx == m.activeTab {
 		return m, nil
 	}
-	if m.dirty() {
-		m.statusMsg = "save or discard current edits before switching tabs"
-		return m, nil
-	}
+	m = m.syncActiveTab()
 	m.activeTab = idx
-	m = m.loadSavedRequest(m.openTabs[idx])
+	m = m.loadActiveTab()
 	return m, nil
 }
 
-// openTabHit maps a click column to a tab. onClose reports whether the click
-// landed on that tab's trailing ✕ close button (its last openTabCloseZone cells).
-func openTabHit(x, startX int, tabs []string) (idx int, onClose bool, ok bool) {
+// openTabHit maps a click column to a tab, given the rendered tab labels (so its
+// widths match the tabline exactly, dirty markers included). onClose reports
+// whether the click landed on that tab's trailing ✕ close button (its last
+// openTabCloseZone cells).
+func openTabHit(x, startX int, labels []string) (idx int, onClose bool, ok bool) {
 	col := startX
-	for i, name := range tabs {
+	for i, label := range labels {
 		if i > 0 {
 			col += openTabGap
 		}
-		cellW := lipgloss.Width(openTabLabel(name))
+		cellW := lipgloss.Width(label)
 		if x >= col && x < col+cellW {
 			return i, x >= col+cellW-openTabCloseZone, true
 		}

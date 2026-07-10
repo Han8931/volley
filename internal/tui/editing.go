@@ -2,6 +2,7 @@ package tui
 
 import (
 	"net/url"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -70,6 +71,13 @@ func requestsEqual(a, b model.Request) bool {
 // request, but first pop an unsaved-changes prompt when there are edits.
 
 func (m Model) guardedOpen(name string) (tea.Model, tea.Cmd) {
+	// Already open in another tab: switch to it — its buffer keeps its own
+	// edits, so no unsaved-changes guard is needed and no duplicate tab appears.
+	for i, t := range m.tabs {
+		if t.name == name && i != m.activeTab {
+			return m.switchOpenTabTo(i)
+		}
+	}
 	if m.dirty() {
 		return m.armSavePrompt(pendingOpenRequest, name), nil
 	}
@@ -91,7 +99,8 @@ func (m Model) guardedNewSaved(name string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) guardedQuit() (tea.Model, tea.Cmd) {
-	if m.dirty() {
+	// Quitting discards every open buffer, so dirty background tabs guard it too.
+	if m.anyDirty() {
 		return m.armSavePrompt(pendingQuit, ""), nil
 	}
 	return m, tea.Quit
@@ -112,6 +121,13 @@ func (m Model) armSavePrompt(action pendingKind, arg string) Model {
 	case pendingQuit:
 		verb = "quitting"
 	}
+	// Quitting discards every open buffer, so when background tabs also carry
+	// unsaved edits the prompt lists all dirty buffers and y saves them all.
+	if action == pendingQuit && m.backgroundTabsDirty() {
+		m.statusMsg = "unsaved changes in " + strings.Join(m.dirtyBufferNames(), ", ") +
+			" — save all before quitting? (y)es (n)o (esc)"
+		return m
+	}
 	if m.currentName != "" {
 		m.statusMsg = "unsaved changes in " + m.currentName +
 			" — save before " + verb + "? (y)es (n)o (esc)"
@@ -130,6 +146,15 @@ func (m *Model) clearSavePrompt() {
 func (m Model) resolveSaveConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
+		// Quitting discards every buffer, so y saves them all; the other pending
+		// transitions replace only the active editor, so y saves just that.
+		if m.pendingAction == pendingQuit {
+			m, ok := m.saveAllDirty()
+			if !ok {
+				return m, nil // failure is in statusMsg; keep the prompt armed
+			}
+			return m.performPending()
+		}
 		if m.currentName == "" {
 			// Nothing to save to yet; keep the prompt so n/esc still work.
 			m.statusMsg = "no name yet — use :w <name> to save, or (n) to discard"

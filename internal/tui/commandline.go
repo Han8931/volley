@@ -100,13 +100,15 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 	case "q!", "quit!", "qa!", "qall!", "quitall!":
 		return m, tea.Quit // force-quit, discarding unsaved edits
 	case "wq", "x", "wqa", "wqall", "xa", "xall":
-		if m.currentName == "" {
+		// Quitting discards every open buffer, so the write covers them all:
+		// the active editor plus any dirty background tab.
+		if m.dirty() && m.currentName == "" {
 			m.statusMsg = "no name yet — use :w <name> first"
 			return m, nil
 		}
-		m, ok := m.saveCurrentRequest(m.currentName)
+		m, ok := m.saveAllDirty()
 		if !ok {
-			return m, nil // save failed — stay open so edits aren't lost
+			return m, nil // a save failed — stay open so edits aren't lost
 		}
 		return m, tea.Quit
 	case "send":
@@ -143,6 +145,7 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		if err := m.collectionStore.Rename(fields[1], fields[2]); err != nil {
 			m.statusMsg = "rename failed: " + err.Error()
 		} else {
+			m = m.renameOpenBuffers(fields[1], fields[2])
 			m.statusMsg = "renamed " + fields[1] + " → " + fields[2]
 			m.refreshCollections()
 		}
@@ -259,6 +262,7 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 func (m Model) newBlankRequest() Model {
 	m = m.applyRequest(model.NewRequest())
 	m.currentName = ""
+	m = m.syncActiveTab() // the active tab, if any, becomes the new scratch buffer
 	m.statusMsg = "new request"
 	return m
 }
@@ -272,6 +276,7 @@ func (m Model) newSavedRequest(name string) Model {
 	}
 	m = m.applyRequest(req)
 	m.currentName = name
+	m = m.syncActiveTab() // repurpose the active tab, if any, for the new request
 	m.statusMsg = "created " + name + " — edit URL, then :save"
 	m.refreshCollections()
 	return m
@@ -295,6 +300,7 @@ func (m Model) saveCurrentRequest(name string) (Model, bool) {
 	}
 	m.currentName = name
 	m.baseline = req // current edits are now the on-disk state
+	m = m.syncActiveTab() // :save <newname> repoints the active tab too
 	m.statusMsg = "saved " + name
 	m.refreshCollections()
 	return m, true
@@ -326,6 +332,7 @@ func (m Model) applyCurlImport(cmd string) Model {
 	// An imported, unnamed request contains user data that is not on disk. Keep it
 	// dirty so quit/open/new prompts protect it until the user saves or discards.
 	m.baseline = model.NewRequest()
+	m = m.syncActiveTab() // the active tab, if any, now holds the import
 	msg := "imported curl request"
 	if len(warns) > 0 {
 		msg += " — " + strings.Join(warns, "; ")
@@ -659,6 +666,9 @@ func (m Model) loadSavedRequest(name string) Model {
 	}
 	m = m.applyRequest(req)
 	m.currentName = name
+	// Opening into the active tab repurposes it: keep its slot (name, buffer,
+	// baseline) in step so the tabline shows the new request immediately.
+	m = m.syncActiveTab()
 	m.statusMsg = "opened " + name
 	return m
 }
@@ -675,48 +685,64 @@ func (m Model) openCollectionTabs() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	open := make(map[string]bool, len(m.openTabs))
-	for _, t := range m.openTabs {
-		open[t] = true
+	m = m.syncActiveTab() // preserve the current tab's edits before adding/switching
+
+	open := make(map[string]bool, len(m.tabs))
+	for _, t := range m.tabs {
+		open[t.name] = true
 	}
-	tabs := append([]string(nil), m.openTabs...)
+	tabs := cloneTabs(m.tabs)
 	added, firstNew := 0, -1
+	var failed []string // selections whose files couldn't be loaded (e.g. deleted externally)
 	for _, n := range names {
 		if open[n] {
+			continue
+		}
+		req, err := m.collectionStore.Load(n)
+		if err != nil {
+			failed = append(failed, n)
 			continue
 		}
 		open[n] = true
 		if firstNew < 0 {
 			firstNew = len(tabs)
 		}
-		tabs = append(tabs, n)
+		tabs = append(tabs, newTabFromSaved(n, req))
 		added++
 	}
-	m.openTabs = tabs
+	m.tabs = tabs
+	if len(m.tabs) == 0 {
+		// Every selection failed to load and nothing was open to fall back to.
+		m.statusMsg = "open failed: " + strings.Join(failed, ", ")
+		return m, nil
+	}
 
 	// Focus the first newly-opened tab; if every selection was already open, jump
 	// to the first one named so T still takes you there.
 	target := firstNew
 	if target < 0 {
-		target = indexOf(m.openTabs, names[0])
+		target = indexOfName(m.tabs, names[0])
 	}
 	m.activeTab = target
-	m = m.loadSavedRequest(m.openTabs[target])
+	m = m.loadActiveTab()
 	switch {
 	case added == 0:
-		m.statusMsg = "switched to " + m.openTabs[target]
+		m.statusMsg = "switched to " + m.tabs[target].name
 	case added == 1:
-		m.statusMsg = "opened tab " + m.openTabs[target]
+		m.statusMsg = "opened tab " + m.tabs[target].name
 	default:
 		m.statusMsg = fmt.Sprintf("opened %d tabs", added)
+	}
+	if len(failed) > 0 {
+		m.statusMsg += " · failed to open: " + strings.Join(failed, ", ")
 	}
 	return m, nil
 }
 
-// indexOf returns the position of name in tabs, or 0 when absent.
-func indexOf(tabs []string, name string) int {
+// indexOfName returns the position of the tab named name, or 0 when absent.
+func indexOfName(tabs []tabBuf, name string) int {
 	for i, t := range tabs {
-		if t == name {
+		if t.name == name {
 			return i
 		}
 	}
@@ -726,40 +752,41 @@ func indexOf(tabs []string, name string) int {
 // openTabByName opens a saved request as a tab (switching to it if already
 // open) and loads it into the editor — the :tabnew entry point.
 func (m Model) openTabByName(name string) (tea.Model, tea.Cmd) {
-	for i, t := range m.openTabs {
-		if t == name {
+	for i, t := range m.tabs {
+		if t.name == name {
 			return m.switchOpenTabTo(i)
 		}
 	}
-	if _, err := m.collectionStore.Load(name); err != nil {
+	req, err := m.collectionStore.Load(name)
+	if err != nil {
 		m.statusMsg = "no saved request named " + name
 		return m, nil
 	}
-	m.openTabs = append(append([]string(nil), m.openTabs...), name)
-	m.activeTab = len(m.openTabs) - 1
-	m = m.loadSavedRequest(name)
+	m = m.syncActiveTab()
+	m.tabs = append(cloneTabs(m.tabs), newTabFromSaved(name, req))
+	m.activeTab = len(m.tabs) - 1
+	m = m.loadActiveTab()
 	m.statusMsg = "opened tab " + name
 	return m, nil
 }
 
 // closeActiveTab drops the current tab and loads its neighbour.
 func (m Model) closeActiveTab() (tea.Model, tea.Cmd) {
-	if len(m.openTabs) == 0 {
+	if len(m.tabs) == 0 {
 		m.statusMsg = "no open tabs"
 		return m, nil
 	}
 	return m.closeTabAt(m.activeTab)
 }
 
-// closeTabAt removes tab idx. Closing the active tab loads its neighbour and can
-// discard unsaved edits, so that case asks for confirmation first. Closing any
-// other tab keeps the current editor (and its edits) untouched, just shifting the
-// active index, so mouse-closing a background tab is always safe.
+// closeTabAt removes tab idx. Because each tab now holds its own in-memory edits,
+// closing any tab with unsaved changes — active or background — asks for
+// confirmation first; a clean tab closes immediately.
 func (m Model) closeTabAt(idx int) (tea.Model, tea.Cmd) {
-	if idx < 0 || idx >= len(m.openTabs) {
+	if idx < 0 || idx >= len(m.tabs) {
 		return m, nil
 	}
-	if idx == m.activeTab && m.dirty() {
+	if m.tabDirty(idx) {
 		m.confirmCloseTab = true
 		m.closeTabIdx = idx
 		m.statusMsg = "close tab with unsaved changes? (y/n)"
@@ -769,26 +796,26 @@ func (m Model) closeTabAt(idx int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) closeTabAtDiscarding(idx int) Model {
-	if idx < 0 || idx >= len(m.openTabs) {
+	if idx < 0 || idx >= len(m.tabs) {
 		return m
 	}
 	closingActive := idx == m.activeTab
-	tabs := append([]string(nil), m.openTabs[:idx]...)
-	tabs = append(tabs, m.openTabs[idx+1:]...)
-	m.openTabs = tabs
-	if len(m.openTabs) == 0 {
+	tabs := cloneTabs(m.tabs)
+	tabs = append(tabs[:idx], tabs[idx+1:]...)
+	m.tabs = tabs
+	if len(m.tabs) == 0 {
 		m.activeTab = 0
 		m.statusMsg = "closed tab"
 		return m
 	}
 	switch {
 	case idx < m.activeTab:
-		m.activeTab-- // the active tab shifted left; its editor stays as-is
+		m.activeTab-- // the active tab shifted left; its live editor stays as-is
 	case closingActive:
-		if m.activeTab >= len(m.openTabs) {
-			m.activeTab = len(m.openTabs) - 1
+		if m.activeTab >= len(m.tabs) {
+			m.activeTab = len(m.tabs) - 1
 		}
-		m = m.loadSavedRequest(m.openTabs[m.activeTab]) // load the neighbour
+		m = m.loadActiveTab() // restore the neighbour's buffer
 	}
 	m.statusMsg = "closed tab"
 	return m
@@ -807,11 +834,12 @@ func (m Model) resolveTabCloseConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // closeOtherTabs keeps only the active tab (Vim's :tabonly).
 func (m Model) closeOtherTabs() (tea.Model, tea.Cmd) {
-	if len(m.openTabs) <= 1 {
+	if len(m.tabs) <= 1 {
 		m.statusMsg = "no other tabs"
 		return m, nil
 	}
-	m.openTabs = []string{m.openTabs[m.activeTab]}
+	m = m.syncActiveTab() // capture the surviving tab's live edits before collapsing
+	m.tabs = []tabBuf{m.tabs[m.activeTab]}
 	m.activeTab = 0
 	m.statusMsg = "closed other tabs"
 	return m, nil

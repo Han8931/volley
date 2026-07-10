@@ -236,13 +236,34 @@ const (
 	// close hot-zone; clicking anywhere else on the tab switches to it.
 	openTabCloseGlyph = "✕"
 	openTabCloseZone  = 2
+	// openTabDirtyGlyph marks a tab whose buffer has unsaved edits.
+	openTabDirtyGlyph = "●"
 )
 
-// openTabLabel is the on-screen text of a single tab: the (truncated) name with
-// a trailing close button, padded one cell each side. Shared by the renderer and
-// the click hit-tester so their widths never drift.
-func openTabLabel(name string) string {
-	return " " + truncateMiddle(name, openTabLabelMaxW) + " " + openTabCloseGlyph + " "
+// openTabLabel is the on-screen text of a single tab: the (truncated) name,
+// prefixed with a dot when the tab has unsaved edits, plus a trailing close
+// button, padded one cell each side. Shared by the renderer and the click
+// hit-tester so their widths never drift.
+func openTabLabel(name string, dirty bool) string {
+	display := name
+	if display == "" {
+		display = "unsaved"
+	}
+	display = truncateMiddle(display, openTabLabelMaxW)
+	if dirty {
+		display = openTabDirtyGlyph + display
+	}
+	return " " + display + " " + openTabCloseGlyph + " "
+}
+
+// tabLabels renders every open tab's label (with its live dirty state), for the
+// renderer and the click hit-tester to share so their widths never drift.
+func (m Model) tabLabels() []string {
+	labels := make([]string, len(m.tabs))
+	for i, t := range m.tabs {
+		labels[i] = openTabLabel(t.name, m.tabDirty(i))
+	}
+	return labels
 }
 
 // viewOpenTabs renders the tree-opened request tabs as a tabline at the top of
@@ -258,7 +279,7 @@ func (m Model) viewOpenTabs(l layout) string {
 	}
 	fill := lipgloss.NewStyle().Background(colSel)
 
-	if len(m.openTabs) == 0 {
+	if len(m.tabs) == 0 {
 		hint := " no open tabs — mark requests in the tree, then press T "
 		return fill.Foreground(colDim).Width(width).MaxWidth(width).Render(hint)
 	}
@@ -269,7 +290,7 @@ func (m Model) viewOpenTabs(l layout) string {
 
 	var b strings.Builder
 	used := 0
-	for i, name := range m.openTabs {
+	for i, label := range m.tabLabels() {
 		if i > 0 {
 			b.WriteString(sep)
 			used += openTabGap
@@ -278,7 +299,6 @@ func (m Model) viewOpenTabs(l layout) string {
 		if i == m.activeTab {
 			st = active
 		}
-		label := openTabLabel(name)
 		b.WriteString(st.Render(label))
 		used += lipgloss.Width(label)
 	}
@@ -447,8 +467,8 @@ func (m Model) docNameSeg() string {
 		name, nameStyle = "[No Name]", lipgloss.NewStyle().Foreground(colDim)
 	}
 	seg := nameStyle.Render(" " + truncateMiddle(name, docNameMaxW))
-	if len(m.openTabs) > 0 {
-		seg += lipgloss.NewStyle().Foreground(colAccent).Render(fmt.Sprintf(" [%d/%d]", m.activeTab+1, len(m.openTabs)))
+	if len(m.tabs) > 0 {
+		seg += lipgloss.NewStyle().Foreground(colAccent).Render(fmt.Sprintf(" [%d/%d]", m.activeTab+1, len(m.tabs)))
 	}
 	if m.dirty() {
 		seg += lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(" [+]")

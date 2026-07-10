@@ -511,8 +511,8 @@ func TestClickOpensTreeRequestAsTab(t *testing.T) {
 	if m.currentName != "seed" {
 		t.Errorf("click should open the seed request, currentName=%q", m.currentName)
 	}
-	if len(m.openTabs) != 1 || m.openTabs[0] != "seed" || m.activeTab != 0 {
-		t.Fatalf("click should open seed as a tab, openTabs=%v active=%d", m.openTabs, m.activeTab)
+	if len(m.tabs) != 1 || m.tabs[0].name != "seed" || m.activeTab != 0 {
+		t.Fatalf("click should open seed as a tab, tabs=%v active=%d", m.tabNames(), m.activeTab)
 	}
 }
 

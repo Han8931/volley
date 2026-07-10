@@ -226,8 +226,8 @@ func TestTOpensMarkedRequestsAsTabs(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	m = next.(Model)
-	if len(m.openTabs) != 2 || m.openTabs[0] != "a" || m.openTabs[1] != "b" {
-		t.Fatalf("openTabs = %#v, want [a b]", m.openTabs)
+	if len(m.tabs) != 2 || m.tabs[0].name != "a" || m.tabs[1].name != "b" {
+		t.Fatalf("tabs = %#v, want [a b]", m.tabNames())
 	}
 	if m.currentName != "a" || m.url.Text() != "https://a.test" {
 		t.Fatalf("T should load first opened tab, current=%q url=%q", m.currentName, m.url.Text())
