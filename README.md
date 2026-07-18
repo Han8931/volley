@@ -54,7 +54,7 @@ j/k                 move through the collection tree
 enter or click       open a request as a tab
 ,g then number       jump directly to a pane
 ctrl+w h/j/k/l       move between panes
-:send                send the request
+enter (URL bar)      send the request (:send works from anywhere)
 p                   toggle raw/pretty JSON response
 /                   search the response
 :save name           save the current request
@@ -70,7 +70,7 @@ p                   toggle raw/pretty JSON response
 | `,g` | show numbered pane hints, then press the target number |
 | `tab` / `shift+tab` | cycle focus between panes |
 | arrow keys | mirror `h/j/k/l` inside the focused pane |
-| `?` | help overlay |
+| `?` | help overlay (`j/k` scroll it; any other key closes) |
 | `:` | command line |
 | `q` | quit, prompting if there are unsaved changes |
 
@@ -97,8 +97,9 @@ p                   toggle raw/pretty JSON response
 
 | Key | Action |
 |-----|--------|
-| `r` in Method pane | cycle HTTP method |
+| `r` / `R` in Method pane | cycle HTTP method forward / back |
 | `i` / `a` in URL | edit the URL |
+| `enter` | send the request (Method or URL pane, INSERT or NORMAL) |
 | URL NORMAL | Vim motions/operators, undo/redo, paste |
 | `,t` | edit timeout inline |
 

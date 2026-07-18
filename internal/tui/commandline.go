@@ -253,6 +253,7 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		return m.switchOpenTab(-1)
 	case "help", "h":
 		m.showHelp = true
+		m.helpScroll = 0
 	default:
 		m.statusMsg = "unknown command: " + fields[0]
 	}

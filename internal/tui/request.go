@@ -245,11 +245,18 @@ func (p requestPane) view(hints ...string) string {
 	if len(hints) > 0 && hints[0] != "" {
 		hint = focusHintBadge(hints[0]) + " "
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
+	content := lipgloss.JoinVertical(lipgloss.Left,
 		hint+p.tabBar(),
 		"",
 		p.tabContent(),
 	)
+	// Clamp every line to the pane's content width: an overflowing line would
+	// otherwise wrap inside the bordered pane and shift all rows below it,
+	// breaking both the layout and mouse hit-testing.
+	if p.width > 0 {
+		content = lipgloss.NewStyle().MaxWidth(p.width).Render(content)
+	}
+	return content
 }
 
 func (p requestPane) tabBar() string {
@@ -268,10 +275,14 @@ func (p requestPane) tabBar() string {
 		cells[i] = st.Render(label)
 	}
 	bar := lipgloss.JoinHorizontal(lipgloss.Left, cells...)
-	if !p.focused {
-		bar += dim("   focus this pane (Tab) to switch")
-	} else {
-		bar += dim("   H/L or [ ]")
+	// The trailing hint is decoration: drop it whole when the pane is too
+	// narrow rather than letting it truncate mid-word (view clamps as backstop).
+	hint := "   Tab to focus"
+	if p.focused {
+		hint = "   H/L or [ ]"
+	}
+	if p.width <= 0 || lipgloss.Width(bar)+len(hint) <= p.width {
+		bar += dim(hint)
 	}
 	return bar
 }
@@ -298,11 +309,11 @@ func (p requestPane) tabContent() string {
 
 var (
 	bodyCursorStyle = lipgloss.NewStyle().Reverse(true)
-	jsonKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#93C5FD"))
-	jsonStringStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
-	jsonNumberStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
-	jsonBoolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC"))
-	jsonNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
+	jsonKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#93C5FD"})
+	jsonStringStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"})
+	jsonNumberStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"})
+	jsonBoolStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7C3AED", Dark: "#C084FC"})
+	jsonNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"})
 	jsonPunctStyle  = lipgloss.NewStyle().Foreground(colDim)
 )
 

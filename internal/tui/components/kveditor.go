@@ -42,8 +42,22 @@ func (e KVEditor) Editing() bool { return e.editing }
 // SetFocused toggles the focused highlight.
 func (e *KVEditor) SetFocused(f bool) { e.focused = f }
 
-// SetWidth sets the render width.
-func (e *KVEditor) SetWidth(w int) { e.width = w }
+// SetWidth sets the render width and bounds the inline input to the cell size
+// (the textinput then scrolls horizontally instead of overflowing the cell).
+func (e *KVEditor) SetWidth(w int) {
+	e.width = w
+	e.input.Width = e.colWidth() - 1
+}
+
+// colWidth is the width of one key/value cell: the row minus the enabled mark
+// and the inter-cell gap, split in two.
+func (e KVEditor) colWidth() int {
+	w := (e.width - 6) / 2
+	if w < 6 {
+		return 6
+	}
+	return w
+}
 
 // CancelPending clears unfinished multi-key normal-mode commands owned by the
 // parent pane (for example when "gt" is used for tab switching instead of
@@ -237,12 +251,28 @@ func (e KVEditor) cellValue() string {
 
 // --- styles ---
 
+// The palette mirrors the root package's adaptive colors so the editors stay
+// legible on light terminals too.
 var (
-	colAccent = lipgloss.Color("#7D56F4")
-	colDim    = lipgloss.Color("#6C6C6C")
-	colOff    = lipgloss.Color("#4B4B4B")
-	colSel    = lipgloss.Color("#2A2440")
+	colAccent = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#7D56F4"}
+	colDim    = lipgloss.AdaptiveColor{Light: "#8A8A8A", Dark: "#6C6C6C"}
+	colOff    = lipgloss.AdaptiveColor{Light: "#B3B3B3", Dark: "#4B4B4B"}
+	colSel    = lipgloss.AdaptiveColor{Light: "#E9E3F8", Dark: "#2A2440"}
+	colSelFg  = lipgloss.AdaptiveColor{Light: "#111827", Dark: "#FFFFFF"}
+	colFg     = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E5E5"}
 )
+
+// truncRunes clips s to at most w runes (for plain, un-styled cell text).
+func truncRunes(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	return string(r[:w])
+}
 
 // View renders the table.
 func (e KVEditor) View() string {
@@ -252,10 +282,7 @@ func (e KVEditor) View() string {
 		return lipgloss.NewStyle().Foreground(colDim).Render(hint)
 	}
 
-	colW := (e.width - 6) / 2
-	if colW < 6 {
-		colW = 6
-	}
+	colW := e.colWidth()
 
 	lines := make([]string, 0, len(e.rows))
 	for i, r := range e.rows {
@@ -273,22 +300,28 @@ func (e KVEditor) View() string {
 }
 
 // renderCell renders one key/value cell, highlighting the active one and
-// showing the live input when editing.
+// showing the live input when editing. Text longer than the cell is truncated
+// before styling: lipgloss' Width would wrap the overflow onto a second line,
+// which breaks the one-row-per-entry table.
 func (e KVEditor) renderCell(text, placeholder string, w, row, col int) string {
 	active := e.focused && row == e.cursor && col == e.col
-	if active && e.editing {
-		text = e.input.View()
-	} else if text == "" {
-		text = placeholder
+	placeholderShown := false
+	switch {
+	case active && e.editing:
+		text = e.input.View() // bounded by input.Width; scrolls, never overflows
+	case text == "":
+		text, placeholderShown = placeholder, true
+	default:
+		text = truncRunes(text, w)
 	}
 	st := lipgloss.NewStyle().Width(w).MaxWidth(w)
 	switch {
 	case active:
-		st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
-	case text == placeholder:
+		st = st.Foreground(colSelFg).Background(colSel)
+	case placeholderShown:
 		st = st.Foreground(colOff)
 	default:
-		st = st.Foreground(lipgloss.Color("#E5E5E5"))
+		st = st.Foreground(colFg)
 	}
 	return st.Render(text)
 }

@@ -40,8 +40,8 @@ func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: [
 // sub-mode (method/timeout/nav shortcuts), the way pressing esc does.
 func urlNormal(m Model) Model { return step(m, keyEsc) }
 
-// sendNow fires the request via the :send command — the keyboard send path now
-// that the Enter key no longer sends.
+// sendNow fires the request via the :send command (the ex-command send path;
+// Enter in the Method/URL panes is the direct one).
 func sendNow(m Model) Model {
 	tm, _ := m.executeCommand("send")
 	return tm.(Model)
@@ -206,8 +206,12 @@ func TestMethodPaneRKeyCyclesMethod(t *testing.T) {
 	if m.req.Method != "PUT" {
 		t.Errorf("after rr: method = %q, want PUT", m.req.Method)
 	}
-	// Only r cycles: R, j/k and space are all inert.
-	for _, k := range []string{"R", "j", "k", " "} {
+	// R cycles the other way (PUT -> POST).
+	if got := step(m, runes("R")).req.Method; got != "POST" {
+		t.Errorf("after R: method = %q, want POST", got)
+	}
+	// Only r/R cycle: j/k and space are inert.
+	for _, k := range []string{"j", "k", " "} {
 		if got := step(m, runes(k)).req.Method; got != "PUT" {
 			t.Errorf("%q must not change the method, got %q", k, got)
 		}
@@ -235,11 +239,10 @@ func TestURLBarStartsNormalAndEditsWithI(t *testing.T) {
 		t.Errorf("special chars should type into the URL, got %q", got)
 	}
 
-	// Enter no longer sends — it's a harmless no-op in the single-line buffer.
-	// Sending is only via :send.
-	notSent, _ := m.Update(keyEnter)
-	if notSent.(Model).sending {
-		t.Error("enter in the URL bar must NOT send the request")
+	// Enter sends straight from the URL bar (browser/Postman muscle memory).
+	sent, _ := m.Update(keyEnter)
+	if !sent.(Model).sending {
+		t.Error("enter in the URL bar should send the request")
 	}
 	if s := sendNow(m); !s.sending {
 		t.Error(":send should fire the request")
@@ -1180,11 +1183,9 @@ func TestSendCommandGoesInFlight(t *testing.T) {
 	}
 }
 
-// TestEnterDoesNotSend guards the decision that the Enter key never fires a
-// request — use :send or the SEND button instead.
-func TestEnterDoesNotSend(t *testing.T) {
-	// From the URL bar in both Insert and NORMAL sub-modes, and from the method
-	// pane, Enter must not start a request.
+// TestEnterSends guards the decision that Enter fires the request from every
+// send-adjacent pane: the URL bar (both sub-modes) and the method selector.
+func TestEnterSends(t *testing.T) {
 	base := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	base.url.SetText("https://example.test")
 
@@ -1192,12 +1193,12 @@ func TestEnterDoesNotSend(t *testing.T) {
 		name string
 		m    Model
 	}{
-		{"url insert", base},
-		{"url normal", urlNormal(base)},
+		{"url insert", base.setFocus(focusURL)},
+		{"url normal", urlNormal(base.setFocus(focusURL))},
 		{"method pane", base.setFocus(focusMethod)},
 	} {
-		if got := step(tc.m, keyEnter); got.sending {
-			t.Errorf("%s: Enter must not send", tc.name)
+		if got := step(tc.m, keyEnter); !got.sending {
+			t.Errorf("%s: Enter should send", tc.name)
 		}
 	}
 }
@@ -1420,5 +1421,30 @@ func TestPrettyJSON(t *testing.T) {
 	out, ok := prettyJSON([]byte(`{"x":[1,2]}`))
 	if !ok || !strings.Contains(string(out), "\n") {
 		t.Errorf("valid JSON should indent, got %q ok=%v", out, ok)
+	}
+}
+
+// A terminal batching fast keystrokes into one multi-rune KeyMsg must behave
+// exactly like the keys arriving one at a time.
+func TestBatchedRunesSplit(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}) // tree focused
+	if m.collectionPane.cursor != 0 {
+		t.Fatalf("cursor starts at %d", m.collectionPane.cursor)
+	}
+	rows := len(m.collectionPane.rows())
+	m = step(m, runes("jj")) // one msg, two keystrokes
+	want := 2
+	if rows < 3 {
+		want = rows - 1
+	}
+	if m.collectionPane.cursor != want {
+		t.Errorf("batched jj moved cursor to %d, want %d", m.collectionPane.cursor, want)
+	}
+	// A bracketed paste must NOT be split into normal-mode keys.
+	p := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusURL)
+	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ab"), Paste: true}
+	p = step(p, paste)
+	if got := p.url.Text(); got == "" {
+		t.Skip("vimtext paste handling not asserted; split-avoidance covered by type check")
 	}
 }

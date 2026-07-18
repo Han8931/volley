@@ -291,10 +291,11 @@ func (p collectionPane) viewWithTitle(headerTitle string) string {
 	// Keep the root line to a single row (like the tree rows below) so a long
 	// path doesn't wrap — that would both look messy and desync mouse hit-testing,
 	// which assumes a fixed-height header. Truncate physically (the pane's word
-	// wrap would otherwise break a long path across several rows).
+	// wrap would otherwise break a long path across several rows). p.width is
+	// already the pane's padded content width (see applyLayout).
 	rootLine := "root: " + rootLabel
-	if p.width > 2 {
-		rootLine = truncateRunes(rootLine, p.width-2) // leave room for the pane padding
+	if p.width > 0 {
+		rootLine = truncateRunes(rootLine, p.width)
 	}
 	header := []string{
 		headerTitle,
@@ -317,10 +318,10 @@ func (p collectionPane) viewWithTitle(headerTitle string) string {
 			methodSt := lipgloss.NewStyle().Foreground(methodColor(row.method)).Bold(true)
 			switch {
 			case selected:
-				nameSt = nameSt.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
+				nameSt = nameSt.Foreground(colSelFg).Background(colSel)
 				methodSt = methodSt.Background(colSel)
 			case marked:
-				nameSt = nameSt.Foreground(lipgloss.Color("#FFFFFF")).Background(colMarked)
+				nameSt = nameSt.Foreground(colSelFg).Background(colMarked)
 				methodSt = methodSt.Background(colMarked)
 			case onCursor:
 				nameSt = nameSt.Foreground(colAccent)
@@ -343,9 +344,9 @@ func (p collectionPane) viewWithTitle(headerTitle string) string {
 		}
 		switch {
 		case selected:
-			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
+			st = st.Foreground(colSelFg).Background(colSel)
 		case marked:
-			st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colMarked)
+			st = st.Foreground(colSelFg).Background(colMarked)
 		case onCursor:
 			st = st.Foreground(colAccent)
 		case row.file:
@@ -366,20 +367,20 @@ func (p collectionPane) viewWithTitle(headerTitle string) string {
 
 // methodColor maps an HTTP method to its badge color, reusing the JSON
 // highlighter's palette so the UI reads as one system.
-func methodColor(method string) lipgloss.Color {
+func methodColor(method string) lipgloss.TerminalColor {
 	switch method {
 	case "GET":
-		return lipgloss.Color("#34D399") // green
+		return lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"} // green
 	case "POST":
-		return lipgloss.Color("#FBBF24") // amber
+		return lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"} // amber
 	case "PUT":
-		return lipgloss.Color("#60A5FA") // blue
+		return lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#60A5FA"} // blue
 	case "PATCH":
-		return lipgloss.Color("#C084FC") // purple
+		return lipgloss.AdaptiveColor{Light: "#7C3AED", Dark: "#C084FC"} // purple
 	case "DELETE":
-		return lipgloss.Color("#F87171") // red
+		return lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"} // red
 	default:
-		return lipgloss.Color("#93C5FD") // HEAD / OPTIONS / other
+		return lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#93C5FD"} // HEAD / OPTIONS / other
 	}
 }
 

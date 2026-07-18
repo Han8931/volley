@@ -377,8 +377,19 @@ func TestHelpToggle(t *testing.T) {
 	if !strings.Contains(m.View(), "keybindings") {
 		t.Error("help view should render keybindings")
 	}
-	m = step(m, runes("j")) // any key closes
+	// j/k scroll the overlay rather than closing it.
+	m = step(m, runes("j"))
+	if !m.showHelp {
+		t.Error("j should scroll help, not dismiss it")
+	}
+	if m.helpScroll == 0 && m.helpMaxScroll() > 0 {
+		t.Error("j should advance the help scroll position")
+	}
+	m = step(m, runes("q")) // any non-scroll key closes
 	if m.showHelp {
-		t.Error("a key press should dismiss help")
+		t.Error("a non-scroll key press should dismiss help")
+	}
+	if m.helpScroll != 0 {
+		t.Error("dismissing help should reset its scroll position")
 	}
 }

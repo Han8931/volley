@@ -160,6 +160,7 @@ type promptState struct {
 	// unsaved-changes prompt; pendingArg carries its payload (e.g. a name).
 	pendingAction pendingKind
 	pendingArg    string
+	helpScroll    int // first visible content row of the help overlay
 }
 
 // chordState tracks multi-key sequences awaiting their next keystroke.
@@ -301,6 +302,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m = m.applyCollectionVisibility()
 		m = m.applyLayout(m.computeLayout())
+		m.rerenderResponse()
 		return m, nil
 
 	case tea.MouseMsg:
@@ -318,6 +320,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Terminals can batch fast keystrokes (key repeat, laggy SSH) into one
+		// KeyRunes message; every handler matches single keys, so split the batch
+		// and process the runes in order. Bracketed paste stays intact for the
+		// active text field.
+		if msg.Type == tea.KeyRunes && !msg.Paste && len(msg.Runes) > 1 {
+			return m.updateRuneBatch(msg.Runes)
+		}
 		if m.shouldSuppressWheelArrow(msg) {
 			return m, nil
 		}
@@ -330,8 +339,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.cancelSend()
 		}
 		if m.showHelp {
-			m.showHelp = false // any key dismisses help
-			return m, nil
+			return m.updateHelp(msg), nil
 		}
 		if m.confirmDelete != "" {
 			return m.resolveDeleteConfirm(msg), nil
@@ -395,8 +403,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// updateRuneBatch replays a batched multi-rune key message as individual
+// keystrokes, so fast input never falls through the single-key handlers.
+func (m Model) updateRuneBatch(runes []rune) (tea.Model, tea.Cmd) {
+	var (
+		cur  tea.Model = m
+		cmds []tea.Cmd
+	)
+	for _, r := range runes {
+		var cmd tea.Cmd
+		cur, cmd = cur.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return cur, tea.Batch(cmds...)
+}
+
+// updateHelp handles keys while the help overlay is open: Vim scroll motions
+// move through it, anything else dismisses it.
+func (m Model) updateHelp(msg tea.KeyMsg) Model {
+	page := m.helpPageRows()
+	switch msg.String() {
+	case "j", "down":
+		m.helpScroll++
+	case "k", "up":
+		m.helpScroll--
+	case "ctrl+d":
+		m.helpScroll += page / 2
+	case "ctrl+u":
+		m.helpScroll -= page / 2
+	case "g", "gg":
+		m.helpScroll = 0
+	case "G":
+		m.helpScroll = m.helpMaxScroll()
+	default:
+		m.showHelp = false
+		m.helpScroll = 0
+		return m
+	}
+	m.helpScroll = clampInt(m.helpScroll, 0, m.helpMaxScroll())
+	return m
+}
+
+// rerenderResponse re-renders the response text for the current viewport width
+// (the body is soft-wrapped to it), preserving any active search highlight.
+func (m *Model) rerenderResponse() {
+	if !m.hasResp {
+		return
+	}
+	m.respText = renderResponseBody(m.resp, m.vp.Width, m.rawBody)
+	if m.searchQuery != "" {
+		hits, content := highlightMatches(m.currentResponseText(), m.searchQuery)
+		m.searchHits, m.searchIdx = hits, 0
+		m.vp.SetContent(content)
+		return
+	}
+	m.vp.SetContent(m.currentResponseViewText())
+}
+
 // routeEditing forwards keys to the active text field.
 func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "" // clear transient feedback on the next keystroke, like NORMAL
 	if m.urlInsert() {
 		// The URL bar types like a text field while inserting. A few structural
 		// keys are intercepted so you can send and move panes without an esc dance;
@@ -406,14 +474,14 @@ func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.cycleFocus(1), nil
 		case tea.KeyShiftTab:
 			return m.cycleFocus(-1), nil
+		case tea.KeyEnter:
+			return m.send() // browser/Postman muscle memory: Enter fires the request
 		case tea.KeyCtrlW:
 			// Begin the Vim window-nav chord; leave insert so the next key is nav.
 			m.url.SetMode(vimtext.Normal)
 			m.pendingWindow = true
 			return m, nil
 		}
-		// Enter is intentionally NOT a send shortcut — sending is only via :send.
-		// In this single-line buffer, feeding "enter" is a harmless no-op.
 		m.url.Feed(msg.String()) // includes esc → drops to NORMAL, staying focused
 		m.req.URL = m.url.Text()
 		return m, nil
@@ -488,6 +556,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?":
 		m.showHelp = true
+		m.helpScroll = 0
 		return m, nil
 	case "[", "]":
 		// Likewise, bracket tab navigation from the URL bar should operate on the
@@ -571,21 +640,30 @@ func (m Model) resolveFocusHint(msg tea.KeyMsg) Model {
 // focused: r (Vim-style "replace") advances the HTTP method; j/k (or ↓/↑) cycle
 // either way. Pane moves are tab / ctrl+w.
 func (m Model) updateMethodNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Only r cycles the HTTP method. j/k, space and the arrow keys are all inert
+	// Only r/R cycle the HTTP method. j/k, space and the arrow keys are all inert
 	// here so a stray keypress — or terminal wheel-arrow leakage — can't change
 	// the method behind your back.
-	if msg.String() == "r" {
+	switch msg.String() {
+	case "r":
 		return m.cycleMethod(1), nil
+	case "R":
+		return m.cycleMethod(-1), nil
+	case "enter":
+		return m.send()
 	}
 	return m, nil
 }
 
 // updateURLNormal handles keys while the URL bar is focused in Vim NORMAL mode.
 // It is pure Vim: every key feeds the buffer, so the URL supports the full
-// motion and edit set (x, w, b, e, C, D, dd, cw, p, u, i/a/I/A…). Sending is
-// only via :send. Pane moves stay on tab/ctrl+w and the timeout shortcut is the
-// ,t leader — all handled upstream in updateNormal before reaching here.
+// motion and edit set (x, w, b, e, C, D, dd, cw, p, u, i/a/I/A…) — except
+// Enter, which sends the request. Pane moves stay on tab/ctrl+w and the
+// timeout shortcut is the ,t leader — all handled upstream in updateNormal
+// before reaching here.
 func (m Model) updateURLNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEnter {
+		return m.send()
+	}
 	m.url.Feed(msg.String())
 	m.req.URL = m.url.Text()
 	return m, nil
@@ -599,8 +677,11 @@ func (m Model) updateCollectionNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.collectionPane.updateNormal(msg) {
 	case "open":
+		// Open as a tab, exactly like clicking the row — keyboard and mouse
+		// must not diverge on the same target. (:open keeps vim's :e semantics
+		// of loading into the current buffer, with its unsaved-edits guard.)
 		if it, ok := m.collectionPane.selected(); ok {
-			return m.guardedOpen(it.Name)
+			return m.openTabByName(it.Name)
 		}
 	case "delete":
 		if row, ok := m.collectionPane.current(); ok && row.name != "" {
@@ -729,7 +810,7 @@ func (m Model) updateCollectionMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.openCommandLineWith(':', "mkgroup "+prefix)
 	case "o":
 		if have && !onDir {
-			return m.guardedOpen(name)
+			return m.openTabByName(name) // same tab-open as Enter/click on the row
 		}
 	case "d":
 		if have && name != "" {
@@ -1082,13 +1163,17 @@ func (m Model) clickCollections(y int) (tea.Model, tea.Cmd) {
 }
 
 // clickOpenTab handles a click on the tabline: the trailing ✕ closes that tab,
-// anywhere else on it switches to it. The tabline starts at the left edge of the
-// right-hand column, so hit-testing begins at rightX.
+// anywhere else on it switches to it. The tabline starts at the left edge of
+// the right-hand column, so hit-testing begins at rightX — offset by the strip
+// scroll that keeps the active tab visible, mirroring viewOpenTabs.
 func (m Model) clickOpenTab(x, rightX int) (tea.Model, tea.Cmd) {
-	idx, onClose, ok := openTabHit(x, rightX, m.tabLabels())
+	labels := m.tabLabels()
+	first := tabStripFirst(labels, m.activeTab, tablineWidth(m.computeLayout()))
+	idx, onClose, ok := openTabHit(x, rightX, labels[first:])
 	if !ok {
 		return m, nil
 	}
+	idx += first
 	if onClose {
 		return m.closeTabAt(idx)
 	}
@@ -1208,7 +1293,7 @@ func (m Model) copyButtonClicked(msg tea.MouseMsg) bool {
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
 		return false
 	}
-	if !m.hasResp || m.sending {
+	if !m.copyButtonShown(m.vp.Width) { // covers no-response, in-flight, and narrow panes
 		return false
 	}
 	l := m.computeLayout()

@@ -7,15 +7,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Palette — kept small and named so theming is a later, central change.
+// Palette — kept small and named so theming is a later, central change. Every
+// color is adaptive so the UI stays legible on light terminals too.
 var (
-	colAccent = lipgloss.Color("#7D56F4") // Volley violet
-	colDim    = lipgloss.Color("#6C6C6C")
-	colFg     = lipgloss.Color("#E5E5E5")
-	colOK     = lipgloss.Color("#34D399")
-	colMethod = lipgloss.Color("#F59E0B")
-	colSel    = lipgloss.Color("#2A2440")
-	colMarked = lipgloss.Color("#4B5563") // multi-selected tree rows (ranger/lf-style block)
+	colAccent = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#7D56F4"} // Volley violet
+	colDim    = lipgloss.AdaptiveColor{Light: "#8A8A8A", Dark: "#6C6C6C"}
+	colFg     = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E5E5"}
+	colOK     = lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"}
+	colMethod = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#F59E0B"}
+	colSel    = lipgloss.AdaptiveColor{Light: "#E9E3F8", Dark: "#2A2440"}
+	colMarked = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#4B5563"} // multi-selected tree rows (ranger/lf-style block)
+	// colSelFg pairs with the colSel / colMarked backgrounds (white would vanish
+	// on their light-theme fills).
+	colSelFg = lipgloss.AdaptiveColor{Light: "#111827", Dark: "#FFFFFF"}
 )
 
 const sendButtonText = " SEND "
@@ -266,17 +270,48 @@ func (m Model) tabLabels() []string {
 	return labels
 }
 
+// tablineWidth is the total width of the tab strip: the right-hand column's
+// full span (method pane + gap + URL bar). Shared by the renderer and the
+// click hit-tester.
+func tablineWidth(l layout) int {
+	w := l.methodInnerW + borderOverhead + l.gap + l.urlInnerW + borderOverhead
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
+// tabStripFirst returns the index of the first tab drawn in the strip: 0 while
+// everything fits, otherwise the smallest index that keeps the active tab's
+// right edge inside width — so the active tab can never scroll out of view.
+func tabStripFirst(labels []string, active, width int) int {
+	first := 0
+	for first < active {
+		end := 0
+		for i := first; i <= active; i++ {
+			if i > first {
+				end += openTabGap
+			}
+			end += lipgloss.Width(labels[i])
+		}
+		if end <= width {
+			break
+		}
+		first++
+	}
+	return first
+}
+
 // viewOpenTabs renders the tree-opened request tabs as a tabline at the top of
 // the right-hand column, beside the tree — like Bruno/Postman's tab strip. The
 // bar has a solid fill so it reads as a distinct strip; the active tab is a
 // bright accent block and inactive tabs are lighter gray blocks separated by a
 // gap, so every tab is legible even on a black terminal. The strip is always
-// present (a dim hint when no tabs are open) so the layout never shifts.
+// present (a dim hint when no tabs are open) so the layout never shifts. When
+// the tabs overflow, the strip scrolls so the active tab stays visible (the
+// [n/N] counter in the status bar signals the clipped rest).
 func (m Model) viewOpenTabs(l layout) string {
-	width := l.methodInnerW + borderOverhead + l.gap + l.urlInnerW + borderOverhead
-	if width < 1 {
-		width = 1
-	}
+	width := tablineWidth(l)
 	fill := lipgloss.NewStyle().Background(colSel)
 
 	if len(m.tabs) == 0 {
@@ -288,10 +323,13 @@ func (m Model) viewOpenTabs(l layout) string {
 	idle := lipgloss.NewStyle().Foreground(colFg).Background(colMarked)
 	sep := fill.Render(strings.Repeat(" ", openTabGap))
 
+	labels := m.tabLabels()
+	first := tabStripFirst(labels, m.activeTab, width)
+
 	var b strings.Builder
 	used := 0
-	for i, label := range m.tabLabels() {
-		if i > 0 {
+	for i := first; i < len(labels); i++ {
+		if i > first {
 			b.WriteString(sep)
 			used += openTabGap
 		}
@@ -299,8 +337,8 @@ func (m Model) viewOpenTabs(l layout) string {
 		if i == m.activeTab {
 			st = active
 		}
-		b.WriteString(st.Render(label))
-		used += lipgloss.Width(label)
+		b.WriteString(st.Render(labels[i]))
+		used += lipgloss.Width(labels[i])
 	}
 	if used < width { // pad the rest of the strip so the bar spans the full width
 		b.WriteString(fill.Render(strings.Repeat(" ", width-used)))
@@ -340,25 +378,47 @@ func (m Model) viewResponseInner() string {
 	}
 }
 
-// respHeaderBar lays the Body/Headers tabs against the left edge with the
-// response status + timing pushed to the right, filling width. When the two
-// would collide (a narrow pane) the status sits just past the tabs and the
-// pane clips the overflow, keeping the header to a single row.
-func (m Model) respHeaderBar(width int) string {
+// respHeaderTabs is the header's left side: the Body/Headers selector, plus
+// the numbered focus badge while ,g hints are up. Shared by the renderer and
+// the copy-button visibility/hit-test logic so their widths agree.
+func (m Model) respHeaderTabs() string {
 	tabs := m.respTabBar()
 	if m.focusHints {
 		tabs = focusHintBadge(m.focusHintKey(focusResponse)) + " " + tabs
 	}
+	return tabs
+}
+
+// copyButtonShown reports whether the header has room for the copy pill beside
+// the status summary. When the pane is too narrow for both, the status wins —
+// it is the response's most important datum, and y still yanks.
+func (m Model) copyButtonShown(width int) bool {
+	if !m.hasResp || m.sending {
+		return false
+	}
+	budget := width - lipgloss.Width(m.respHeaderTabs()) - lipgloss.Width(m.copyButtonView()) - 2
+	return renderStatusSummary(m.resp, budget) != ""
+}
+
+// respHeaderBar lays the Body/Headers tabs against the left edge with the
+// response status + timing pushed to the right, filling width. On a narrow
+// pane the summary drops segments (then the copy button) rather than clipping
+// mid-word, keeping the header to a single truthful row.
+func (m Model) respHeaderBar(width int) string {
+	tabs := m.respHeaderTabs()
 	// The right side shows the spinner while a request is in flight, otherwise
 	// the response status + timing followed by the clickable copy button.
 	// Reserve at least one column of separation.
 	var right string
-	if m.sending {
+	switch {
+	case m.sending:
 		right = m.spin.View() + dim(" sending…")
-	} else {
+	case m.copyButtonShown(width):
 		copyBtn := m.copyButtonView()
 		reserved := lipgloss.Width(tabs) + lipgloss.Width(copyBtn) + 2
 		right = renderStatusSummary(m.resp, width-reserved) + " " + copyBtn
+	default:
+		right = renderStatusSummary(m.resp, width-lipgloss.Width(tabs)-1)
 	}
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(right)
 	if gap < 1 {
@@ -413,6 +473,8 @@ func (m Model) viewStatusBar() string {
 	switch {
 	case m.statusMsg != "":
 		hints = " " + m.statusMsg
+	case m.timeoutInput.Focused():
+		hints = " timeout: e.g. 500ms, 10s, 2m · ⏎/esc apply · empty = default"
 	case insert && m.focus == focusURL:
 		hints = " type the URL · ⏎ send · tab/^w move panes · esc — NORMAL shortcuts"
 	case insert:
@@ -424,9 +486,9 @@ func (m Model) viewStatusBar() string {
 	case m.focusHints:
 		hints = " jump: 1 tree · 2 method · 3 url · 4 request · 5 response · esc cancel"
 	case m.focus == focusURL:
-		hints = " i edit URL · t timeout · ⏎ send · tab / ^w move panes · ? help"
+		hints = " i edit URL · ,t timeout · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusMethod:
-		hints = " r change method · ⏎ send · tab / ^w move panes · ? help"
+		hints = " r/R change method · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusCollection:
 		hints = " tree: j/k move · o/l open/toggle · O/X expand/collapse all · p parent · m menu · dd del · R reload"
 	case m.focus == focusRequest && m.reqPane.tab == tabBody:
@@ -467,7 +529,7 @@ func (m Model) docNameSeg() string {
 		name, nameStyle = "[No Name]", lipgloss.NewStyle().Foreground(colDim)
 	}
 	seg := nameStyle.Render(" " + truncateMiddle(name, docNameMaxW))
-	if len(m.tabs) > 0 {
+	if len(m.tabs) > 1 { // a lone tab needs no position counter
 		seg += lipgloss.NewStyle().Foreground(colAccent).Render(fmt.Sprintf(" [%d/%d]", m.activeTab+1, len(m.tabs)))
 	}
 	if m.dirty() {

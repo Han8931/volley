@@ -36,12 +36,25 @@ const methodPaneInnerW = 9
 
 // applyLayout pushes computed sizes into child components. Keeping this in one
 // place prevents border/padding accounting from drifting between Update and View.
+// The bordered panes carry Padding(0,1), so children get two columns less than
+// the pane's inner width — otherwise their content wraps inside the pane and
+// pushes every row below it out of place.
 func (m Model) applyLayout(l layout) Model {
 	m.vp.Width = l.respViewportW
 	m.vp.Height = l.respViewportH
-	m.collectionPane.width = l.collectionInnerW
-	m.reqPane.setSize(l.reqInnerW, l.bodyInnerH)
+	m.collectionPane.width = innerContentW(l.collectionInnerW)
+	m.reqPane.setSize(innerContentW(l.reqInnerW), l.bodyInnerH)
 	return m
+}
+
+// innerContentW is a bordered pane's usable content width: its inner width
+// minus the one-cell horizontal padding on each side.
+func innerContentW(paneInnerW int) int {
+	w := paneInnerW - 2
+	if w < 1 {
+		return 1
+	}
+	return w
 }
 
 func (m Model) computeLayout() layout {

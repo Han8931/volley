@@ -155,3 +155,27 @@ func TestResponseHeaderCombinesTabsAndStatus(t *testing.T) {
 		t.Errorf("status should be right of the tabs, got %q", header)
 	}
 }
+
+func TestWrapLines(t *testing.T) {
+	if got := wrapLines("abcdefgh", 3); got != "abc\ndef\ngh" {
+		t.Errorf("wrapLines = %q", got)
+	}
+	if got := wrapLines("ab\ncd", 10); got != "ab\ncd" {
+		t.Errorf("short lines must pass through, got %q", got)
+	}
+	if got := wrapLines("abcdef", 0); got != "abcdef" {
+		t.Errorf("width 0 must be a no-op, got %q", got)
+	}
+}
+
+// A budget too small for even the bare status yields nothing: a clipped
+// "200 OK" would read as HTTP 20.
+func TestStatusSummaryHidesWhenTooNarrow(t *testing.T) {
+	resp := model.Response{Status: "200 OK", StatusCode: 200, Size: 10}
+	if got := stripANSI(renderStatusSummary(resp, 3)); got != "" {
+		t.Errorf("tiny budget should render nothing, got %q", got)
+	}
+	if got := stripANSI(renderStatusSummary(resp, 0)); got != "" {
+		t.Errorf("zero budget should render nothing, got %q", got)
+	}
+}

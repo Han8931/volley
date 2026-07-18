@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // helpSections is the content of the "?" overlay.
 var helpSections = []struct {
@@ -12,7 +16,7 @@ var helpSections = []struct {
 		{"ctrl+w  ↑/↓/←/→", "move focus between panes (arrows too)"},
 		{"tab / shift+tab", "cycle focus (reading order)"},
 		{"arrows", "move within the focused pane (like h/j/k/l)"},
-		{":send", "send the request"},
+		{"⏎ / :send", "send the request (⏎ from the Method/URL panes)"},
 		{":", "command line"},
 		{"?", "toggle this help"},
 		{",n  ·  ,g", "show / hide collections tree  ·  numbered pane jump"},
@@ -25,11 +29,13 @@ var helpSections = []struct {
 		{":tabnew <name>  ·  :tabonly", "open a saved request in a tab  ·  close all others"},
 	}},
 	{"Method pane", [][2]string{
-		{"r", "cycle the HTTP method (the only key that changes it)"},
+		{"r / R", "cycle the HTTP method forward / back"},
+		{"⏎", "send the request"},
 		{"tab / ^w", "reach it from the URL bar"},
 	}},
 	{"URL bar", [][2]string{
 		{"i / a  ·  click", "edit the URL"},
+		{"⏎", "send the request (INSERT or NORMAL)"},
 		{"tab / ^w", "move to another pane"},
 		{"NORMAL", "Vim edits (x w b C dd p u …)"},
 		{",t", "edit inline timeout (leader)"},
@@ -89,24 +95,72 @@ var helpSections = []struct {
 	}},
 }
 
-func (m Model) helpView() string {
+// helpRows renders the overlay's content lines (title + every section). The
+// blank separator rows are literal lines rather than style margins so the
+// scroll window can slice them.
+func helpRows() []string {
 	keyStyle := lipgloss.NewStyle().Foreground(colOK).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E5E5E5"))
-	headStyle := lipgloss.NewStyle().Foreground(colAccent).Bold(true).MarginTop(1)
+	descStyle := lipgloss.NewStyle().Foreground(colFg)
+	headStyle := lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 
-	var rows []string
-	rows = append(rows, lipgloss.NewStyle().Foreground(colAccent).Bold(true).
-		Render("Volley — keybindings"))
-
+	rows := []string{lipgloss.NewStyle().Foreground(colAccent).Bold(true).
+		Render("Volley — keybindings")}
 	for _, sec := range helpSections {
-		rows = append(rows, headStyle.Render(sec.title))
+		rows = append(rows, "", headStyle.Render(sec.title))
 		for _, kv := range sec.keys {
 			rows = append(rows,
 				"  "+keyStyle.Width(18).Render(kv[0])+descStyle.Render(kv[1]))
 		}
 	}
-	rows = append(rows, lipgloss.NewStyle().Foreground(colDim).MarginTop(1).
-		Render("press any key to close"))
+	return rows
+}
+
+// helpBoxOverhead is the rows the overlay chrome consumes around the content:
+// the border (2), the vertical padding (2), and the footer block (blank + line).
+const helpBoxOverhead = 6
+
+// helpPageRows is how many content rows fit in the overlay at the current
+// terminal height; helpMaxScroll is the largest useful helpScroll value.
+func (m Model) helpPageRows() int {
+	page := m.height - helpBoxOverhead
+	if page < 1 {
+		return 1
+	}
+	return page
+}
+
+func (m Model) helpMaxScroll() int {
+	max := len(helpRows()) - m.helpPageRows()
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
+// helpView draws the overlay. Content taller than the terminal scrolls (j/k,
+// ctrl+d/u, g/G) instead of being clipped off-screen.
+func (m Model) helpView() string {
+	rows := helpRows()
+	page := m.helpPageRows()
+	scroll := clampInt(m.helpScroll, 0, m.helpMaxScroll())
+
+	footer := "press any key to close"
+	if len(rows) > page {
+		pos := "top"
+		switch {
+		case scroll >= m.helpMaxScroll():
+			pos = "end"
+		case scroll > 0:
+			pos = fmt.Sprintf("%d%%", scroll*100/m.helpMaxScroll())
+		}
+		footer = "j/k scroll · " + pos + " · any other key closes"
+		end := scroll + page
+		if end > len(rows) {
+			end = len(rows)
+		}
+		rows = rows[scroll:end]
+	}
+	rows = append(rows, "", lipgloss.NewStyle().Foreground(colDim).Render(footer))
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

@@ -475,3 +475,60 @@ func TestTreeContentAlignsWithTabline(t *testing.T) {
 		t.Fatalf("row 0 should be the tree's top border, got %q", lines[0])
 	}
 }
+
+// The tab strip scrolls so the active tab is always fully visible; the click
+// hit-tester applies the same offset (see clickOpenTab).
+func TestTabStripScrollsToActiveTab(t *testing.T) {
+	labels := []string{}
+	for i := 0; i < 8; i++ {
+		labels = append(labels, openTabLabel("request-name-x", false)) // uniform width
+	}
+	w := lipgloss.Width(labels[0])
+
+	// Everything fits: no scroll regardless of the active tab.
+	if got := tabStripFirst(labels, 7, 8*(w+openTabGap)); got != 0 {
+		t.Errorf("no scroll needed, first = %d, want 0", got)
+	}
+	// Strip holds ~two tabs: activating the last must scroll it into view.
+	width := 2*w + openTabGap
+	first := tabStripFirst(labels, 7, width)
+	if first == 0 {
+		t.Fatal("active tab 7 cannot be visible without scrolling")
+	}
+	// The active tab's right edge must fit within the strip.
+	end := 0
+	for i := first; i <= 7; i++ {
+		if i > first {
+			end += openTabGap
+		}
+		end += w
+	}
+	if end > width {
+		t.Errorf("active tab overflows: end %d > width %d (first=%d)", end, width, first)
+	}
+	// The first tab stays pinned while it is the active one.
+	if got := tabStripFirst(labels, 0, width); got != 0 {
+		t.Errorf("active first tab must not scroll away, first = %d", got)
+	}
+}
+
+// Enter (and o) on a tree request opens it as a tab — the same behavior as
+// clicking the row, so keyboard and mouse never diverge.
+func TestTreeEnterOpensTab(t *testing.T) {
+	m := storedTabModel(t) // empty tab set, store-backed
+	if err := m.collectionStore.Save("alpha", model.Request{Method: "GET", URL: "https://alpha.test"}); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshCollections()
+	m = m.setFocus(focusCollection)
+	// Row 0 is the root; row 1 is alpha.
+	m.collectionPane.cursor = 1
+	next, _ := m.updateCollectionNormal(keyEnter)
+	m = next.(Model)
+	if len(m.tabs) != 1 || m.tabs[0].name != "alpha" {
+		t.Fatalf("enter on a tree request should open a tab, tabs = %+v", m.tabs)
+	}
+	if m.currentName != "alpha" {
+		t.Errorf("currentName = %q, want alpha", m.currentName)
+	}
+}

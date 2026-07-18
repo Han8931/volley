@@ -54,8 +54,21 @@ func (e AuthEditor) Editing() bool { return e.editing }
 // SetFocused toggles the focused highlight.
 func (e *AuthEditor) SetFocused(f bool) { e.focused = f }
 
-// SetWidth sets the render width.
-func (e *AuthEditor) SetWidth(w int) { e.width = w }
+// SetWidth sets the render width and bounds the inline input to the value
+// column (the textinput then scrolls instead of overflowing the row).
+func (e *AuthEditor) SetWidth(w int) {
+	e.width = w
+	e.input.Width = e.valueWidth() - 1
+}
+
+// valueWidth is the room left for a field's value after the fixed-width label.
+func (e AuthEditor) valueWidth() int {
+	w := e.width - 11 // label column (10) + separating space
+	if w < 6 {
+		return 6
+	}
+	return w
+}
 
 // SetAuth replaces the edited auth and resets the cursor.
 func (e *AuthEditor) SetAuth(a model.Auth) {
@@ -288,14 +301,19 @@ func (e AuthEditor) renderRow(id authFieldID, row int) string {
 		val = e.fieldDisplay(id, active)
 	}
 
+	if !(active && e.editing) {
+		// Keep every row to one line: overflow would wrap inside the pane and
+		// shift the rows below (the live input is bounded by input.Width instead).
+		val = truncRunes(val, e.valueWidth())
+	}
 	st := lipgloss.NewStyle()
 	switch {
 	case active && e.editing:
 		// input.View already shows the live cursor
 	case active:
-		st = st.Foreground(lipgloss.Color("#FFFFFF")).Background(colSel)
+		st = st.Foreground(colSelFg).Background(colSel)
 	default:
-		st = st.Foreground(lipgloss.Color("#E5E5E5"))
+		st = st.Foreground(colFg)
 	}
 	return label + " " + st.Render(val)
 }
