@@ -237,6 +237,26 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			name = strings.Join(fields[1:], " ")
 		}
 		return m.openExternalEditor(name)
+	case "loadtest", "lt":
+		if len(fields) < 2 {
+			return m.openLoadPicker()
+		}
+		name := strings.Join(fields[1:], " ")
+		if err := m.loadStore.EnsureDefaults(); err != nil {
+			m.statusMsg = "load profiles unavailable: " + err.Error()
+			return m, nil
+		}
+		p, err := m.loadStore.Load(name)
+		if err != nil {
+			m.statusMsg = "no load profile named " + name
+			return m, nil
+		}
+		if m.loadRunning() {
+			m.statusMsg = "load test already running — esc to stop it first"
+			return m, nil
+		}
+		m.loadRun = nil
+		return m.confirmLoadTest(p), nil
 	case "tabnew", "tabe", "tabedit":
 		if len(fields) < 2 {
 			m.statusMsg = "usage: :tabnew <saved request>"

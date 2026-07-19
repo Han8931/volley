@@ -18,6 +18,7 @@ import (
 
 	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/httpx"
+	"github.com/tabularasa/volley/internal/loadtest"
 	"github.com/tabularasa/volley/internal/model"
 	"github.com/tabularasa/volley/internal/vars"
 	"github.com/tabularasa/volley/internal/vimtext"
@@ -80,6 +81,7 @@ type Model struct {
 	promptState
 	chordState
 	inputState
+	loadState
 }
 
 // editorState is the request currently being edited in the top bar + request
@@ -241,6 +243,7 @@ func New() Model {
 			vp:   vp,
 		},
 		cmdlineState: cmdlineState{cmd: cmd},
+		loadState:    loadState{loadStore: loadtest.DefaultStore()},
 	}
 	m = m.setFocus(focusCollection)
 	if listErr != nil {
@@ -334,9 +337,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		// While a request is in flight, esc aborts it rather than doing its
-		// usual mode-exit, so a slow or hung send is never a dead end.
+		// usual mode-exit, so a slow or hung send is never a dead end. The
+		// same escape hatch stops a running load test.
 		if m.sending && msg.Type == tea.KeyEsc {
 			return m.cancelSend()
+		}
+		if m.loadRunning() && msg.Type == tea.KeyEsc {
+			return m.stopLoadTest()
 		}
 		if m.showHelp {
 			return m.updateHelp(msg), nil
@@ -346,6 +353,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.confirmCloseTab {
 			return m.resolveTabCloseConfirm(msg)
+		}
+		if m.loadConfirm {
+			return m.resolveLoadConfirm(msg)
+		}
+		if m.loadPicker {
+			return m.updateLoadPicker(msg)
 		}
 		if m.pendingAction != pendingNone {
 			return m.resolveSaveConfirm(msg)
@@ -366,6 +379,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editorFinishedMsg:
 		return m.applyEditorResult(msg)
+
+	case loadTickMsg:
+		return m.handleLoadTick(msg)
 
 	case responseMsg:
 		if msg.seq != m.sendSeq {
@@ -501,6 +517,17 @@ func (m Model) routeEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // updateNormal handles NORMAL-mode keys: window navigation and per-pane verbs.
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear transient feedback on the next keystroke
+
+	// A finished load run's results stay up until dismissed; T reruns the same
+	// profile from the response pane.
+	if m.loadRun != nil && m.loadSnap.Done {
+		switch {
+		case msg.Type == tea.KeyEsc:
+			return m.stopLoadTest() // dismisses the finished view
+		case msg.String() == "T" && m.focus == focusResponse:
+			return m.confirmLoadTest(m.loadProfile), nil
+		}
+	}
 
 	// Arrow keys mirror h/j/k/l so they move *within* the focused pane (and drive
 	// the ctrl+w chord), matching Vim. Pane/focus changes are ctrl+w h/j/k/l or
@@ -1072,11 +1099,15 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	// Don't let clicks reach the panes while a modal/prompt owns the screen.
 	if m.showHelp || m.cmdActive || m.collectionMenu ||
-		m.pendingAction != pendingNone || m.confirmDelete != "" || m.confirmCloseTab {
+		m.pendingAction != pendingNone || m.confirmDelete != "" || m.confirmCloseTab ||
+		m.loadPicker || m.loadConfirm {
 		return m, nil
 	}
 	if m.sendButtonClicked(msg) {
 		return m.send()
+	}
+	if m.testButtonClicked(msg) {
+		return m.openLoadPicker()
 	}
 	if m.copyButtonClicked(msg) {
 		return m.yankResponse()
@@ -1270,6 +1301,26 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
 		return false
 	}
+	startX, endX, y := m.sendButtonRect()
+	return msg.Y == y && msg.X >= startX && msg.X <= endX
+}
+
+// testButtonClicked reports whether msg hit the TEST button, which sits one
+// gap cell to the left of SEND in the URL bar.
+func (m Model) testButtonClicked(msg tea.MouseMsg) bool {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
+		return false
+	}
+	sendStartX, _, y := m.sendButtonRect()
+	testW := lipgloss.Width(m.testButtonView())
+	endX := sendStartX - 2 // skip the separating space
+	startX := endX - testW + 1
+	return msg.Y == y && msg.X >= startX && msg.X <= endX
+}
+
+// sendButtonRect is the SEND button's clickable span: right-aligned inside the
+// URL pane's content row. TEST hit-testing is measured from it.
+func (m Model) sendButtonRect() (startX, endX, y int) {
 	l := m.computeLayout()
 	paneX := 0
 	if m.collectionShown {
@@ -1279,10 +1330,10 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	// so the SEND button (right-aligned inside the URL pane) is offset by it.
 	urlPaneX := paneX + l.methodInnerW + borderOverhead + l.gap
 	buttonW := lipgloss.Width(m.sendButtonView())
-	buttonY := m.topBarY() + 1 // URL pane content row, below the top border.
-	buttonStartX := urlPaneX + l.urlInnerW - buttonW
-	buttonEndX := urlPaneX + l.urlInnerW - 1
-	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
+	y = m.topBarY() + 1 // URL pane content row, below the top border.
+	startX = urlPaneX + l.urlInnerW - buttonW
+	endX = urlPaneX + l.urlInnerW - 1
+	return startX, endX, y
 }
 
 // copyButtonClicked reports whether msg hit the copy pill on the response
@@ -1319,6 +1370,9 @@ func (m Model) cycleMethod(delta int) Model {
 
 // updateResponseNav handles Vim scroll motions in the response pane.
 func (m Model) updateResponseNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.loadViewShown() {
+		return m, nil // the load view owns the pane; its keys are routed upstream
+	}
 	// "gg" is the only two-key motion here; clear a stale pending 'g' for any
 	// other key so it can't later fire an unexpected GotoTop.
 	if msg.String() != "g" {
@@ -1513,10 +1567,16 @@ func (m Model) send() (tea.Model, tea.Cmd) {
 	if m.sending {
 		return m, nil
 	}
+	if m.loadRunning() {
+		m.statusMsg = "load test running — esc to stop it before sending"
+		return m, nil
+	}
 	if strings.TrimSpace(m.url.Text()) == "" {
 		m.statusMsg = "cannot send: URL is empty"
 		return m, nil
 	}
+	m.loadRun = nil // a normal send reclaims the response pane from old results
+	m.loadPicker = false
 	built := m.buildRequest()
 	if missing := vars.Unresolved(built); len(missing) > 0 {
 		wrapped := make([]string, len(missing))

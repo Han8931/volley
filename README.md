@@ -5,8 +5,8 @@ variables, curl import/export, pretty responses, and keyboard-native request
 editing — all in one fast TUI.
 
 It is built for people who live in the terminal and want a Postman/Bruno-style
-workflow without leaving Vim muscle memory. Load testing is planned as Volley's
-next major differentiator.
+workflow without leaving Vim muscle memory — plus built-in load testing driven
+by editable load-shape profiles.
 
 ## Why Volley?
 
@@ -26,7 +26,8 @@ next major differentiator.
 
 Functional MVP. Volley currently supports request/response editing, collections,
 request tabs, auth helpers, variables, curl import/export, JSON response
-highlighting, and Vim-style navigation. Load testing is not implemented yet.
+highlighting, Vim-style navigation, and load testing with shaped profiles
+(constant / ramp / spike / step / sawtooth), live charts, and p50/p95/p99.
 
 ## Tech stack
 
@@ -163,6 +164,47 @@ shows a `●` marker in the tabline. Closing a dirty tab asks for confirmation
 before discarding. Unsaved edits are still guarded when opening another request
 into the current tab, or when quitting — dirty background tabs included.
 
+## Load testing
+
+Press the **TEST** button (or `:loadtest`, alias `:lt`) to pick a load profile —
+a plot of target request rate over time. The picker previews each shape as a
+sparkline with its peak rate, duration, and total request count. After a y/n
+confirmation showing exactly what will be fired at which URL, the response pane
+becomes a live run view: ok/error/dropped counters, achieved vs. target RPS,
+p50/p95/p99/max latency, and target + achieved charts.
+
+| Key / command | Action |
+|---------------|--------|
+| `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `esc` cancel) |
+| `:loadtest <name>` / `:lt <name>` | run a named profile directly |
+| `esc` | stop a running test (in-flight requests are cancelled) |
+| `esc` / `T` on the results | close the results / run the same profile again |
+
+Profiles are plain JSON in `loadprofiles/` beside your collections; the five
+default shapes (constant, ramp-up, spike, step, sawtooth) are written there on
+first use so you can edit them or copy them into your own. A profile is a list
+of `{at, rps}` points — linear between points, and two points at the same
+offset make a vertical jump:
+
+```json
+{
+  "name": "spike",
+  "points": [
+    {"at": "0s",  "rps": 5},
+    {"at": "20s", "rps": 5},
+    {"at": "20s", "rps": 100},
+    {"at": "30s", "rps": 100},
+    {"at": "30s", "rps": 5},
+    {"at": "50s", "rps": 5}
+  ]
+}
+```
+
+`maxWorkers` (default 64) caps concurrent in-flight requests; scheduled sends
+that find no free worker are counted as **dropped** — the signal that the
+target can't keep up at the plotted rate. Errors are transport failures plus
+5xx responses.
+
 ## Storage and variables
 
 Saved requests live under Volley's user config directory:
@@ -190,9 +232,11 @@ sending.
 - [x] curl import/export
 - [x] Request tabs (per-tab in-memory buffers with their own dirty state)
 - [x] JSON syntax highlighting for responses
+- [x] Load testing: shaped RPS profiles, worker cap, p50/p95/p99, live charts
 - [ ] Tab session persistence across restarts
 - [ ] Environments and persisted variable scopes
-- [ ] Load testing: concurrency, RPS, p50/p95/p99, live charts
+- [ ] In-TUI load-shape editor (edit points without leaving Volley)
+- [ ] Load-test result history / export
 
 > Note: collections are stored as native JSON. Posting/Postman/Bruno collection
 > import/export is not implemented yet; curl import/export is supported.

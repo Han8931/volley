@@ -77,6 +77,13 @@ var helpSections = []struct {
 		{"/", "search  ·  n / N next / prev"},
 		{"y  ·  ⧉ copy", "yank body to clipboard (key or click the header button)"},
 	}},
+	{"Load testing", [][2]string{
+		{"TEST  ·  :loadtest", "pick a load profile (shape preview), confirm, run"},
+		{":loadtest <name>", "run a named profile against the current request"},
+		{"esc", "stop a running test / close finished results"},
+		{"T (in results)", "run the same profile again"},
+		{"profiles", "JSON files in config dir loadprofiles/ — edit or add your own"},
+	}},
 	{"Command line", [][2]string{
 		{":save users/list", "save current request"},
 		{":open users/list", "open saved request"},

@@ -108,8 +108,8 @@ func (m Model) computeLayout() layout {
 	}
 	urlW := urlTotalW - borderOverhead
 	// Show the inline timeout readout only when the URL bar can spare the room
-	// for it and the SEND button while keeping the input usably wide.
-	showTimeout := (urlW-2-1-len(sendButtonText))-(1+timeoutReserve) >= minURLInputW
+	// for it and the TEST + SEND buttons while keeping the input usably wide.
+	showTimeout := (urlW-2-1-len(sendButtonText)-1-len(testButtonText))-(1+timeoutReserve) >= minURLInputW
 	bodyAvail := rightTotalW - gap - 2*borderOverhead
 	if bodyAvail < 2 {
 		bodyAvail = 2

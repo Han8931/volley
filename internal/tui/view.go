@@ -24,6 +24,9 @@ var (
 
 const sendButtonText = " SEND "
 
+// testButtonText labels the clickable load-test launcher beside SEND.
+const testButtonText = " TEST "
+
 // copyButtonText labels the clickable copy affordance in the response header.
 const copyButtonText = " ⧉ copy "
 
@@ -129,9 +132,9 @@ func (m Model) viewURLBar(l layout) string {
 	urlW := urlInputWidth(l)
 	urlView := m.renderURLField(urlW)
 
-	// The right edge holds the SEND button, preceded by the inline timeout
-	// readout when the bar has room (or is actively being edited).
-	right := m.sendButtonView()
+	// The right edge holds the TEST and SEND buttons, preceded by the inline
+	// timeout readout when the bar has room (or is actively being edited).
+	right := m.testButtonView() + " " + m.sendButtonView()
 	if l.showTimeout || m.timeoutInput.Focused() {
 		right = m.timeoutSegView() + " " + right
 	}
@@ -179,9 +182,9 @@ func urlContentWidth(l layout) int {
 }
 
 func urlInputWidth(l layout) int {
-	// The URL bar holds the input and the SEND button, plus the inline timeout
-	// readout when there's room — each trailing item has a one-cell gap.
-	w := urlContentWidth(l) - 1 - len(sendButtonText)
+	// The URL bar holds the input and the TEST + SEND buttons, plus the inline
+	// timeout readout when there's room — each trailing item has a one-cell gap.
+	w := urlContentWidth(l) - 1 - len(sendButtonText) - 1 - len(testButtonText)
 	if l.showTimeout {
 		w -= 1 + timeoutReserve
 	}
@@ -193,10 +196,20 @@ func urlInputWidth(l layout) int {
 
 func (m Model) sendButtonView() string {
 	st := lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(colOK).Bold(true)
-	if m.sending || strings.TrimSpace(m.url.Text()) == "" {
+	if m.sending || m.loadRunning() || strings.TrimSpace(m.url.Text()) == "" {
 		st = st.Foreground(colFg).Background(colDim)
 	}
 	return st.Render(sendButtonText)
+}
+
+// testButtonView renders the load-test launcher: amber so it reads as "hotter"
+// than a single SEND, dimmed whenever a run can't start right now.
+func (m Model) testButtonView() string {
+	st := lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(colMethod).Bold(true)
+	if m.sending || m.loadRunning() || strings.TrimSpace(m.url.Text()) == "" {
+		st = st.Foreground(colFg).Background(colDim)
+	}
+	return st.Render(testButtonText)
 }
 
 // copyButtonView renders the clickable "copy" pill shown on the right of the
@@ -363,6 +376,10 @@ func (m Model) viewBody(l layout) string {
 // scrollable body viewport.
 func (m Model) viewResponseInner() string {
 	switch {
+	case m.loadPicker:
+		return m.viewLoadPicker()
+	case m.loadRun != nil:
+		return m.viewLoadRun()
 	case m.sending && !m.hasResp:
 		// Nothing to keep on screen yet — show the spinner centered in the pane.
 		return m.focusHintTitle(focusResponse, "RESPONSE") + "\n\n" + m.spin.View() + dim(" sending…")
@@ -485,6 +502,10 @@ func (m Model) viewStatusBar() string {
 		hints = " window: h/j/k/l pick a pane"
 	case m.focusHints:
 		hints = " jump: 1 tree · 2 method · 3 url · 4 request · 5 response · esc cancel"
+	case m.loadRunning():
+		hints = " load test running · esc stop"
+	case m.loadRun != nil && m.focus == focusResponse:
+		hints = " esc close results · T run again"
 	case m.focus == focusURL:
 		hints = " i edit URL · ,t timeout · ⏎ send · tab / ^w move panes · ? help"
 	case m.focus == focusMethod:
