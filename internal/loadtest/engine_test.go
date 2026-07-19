@@ -73,6 +73,33 @@ func TestRunCountsErrors(t *testing.T) {
 	}
 }
 
+func TestRunStopsAtRequestLimit(t *testing.T) {
+	p := shortConstant(100, 5*time.Second)
+	p.MaxRequests = 7
+	var calls atomic.Int64
+	run, err := Runner{
+		Profile: p,
+		Do: func(context.Context) (int, error) {
+			calls.Add(1)
+			return 200, nil
+		},
+	}.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-run.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("request-limited run did not finish early")
+	}
+	if got := calls.Load(); got != 7 {
+		t.Errorf("calls = %d, want exactly 7", got)
+	}
+	if snap := run.Snapshot(); snap.Sent != 7 || snap.Completed != 7 || snap.Dropped != 0 {
+		t.Errorf("snapshot = %+v", snap)
+	}
+}
+
 func TestStopCancelsInFlight(t *testing.T) {
 	release := make(chan struct{})
 	run, err := Runner{
@@ -98,6 +125,8 @@ func TestStopCancelsInFlight(t *testing.T) {
 	}
 	if snap := run.Snapshot(); snap.InFlight != 0 || !snap.Done {
 		t.Errorf("after stop: %+v", snap)
+	} else if snap.Canceled == 0 || snap.Errors != 0 {
+		t.Errorf("stopped requests must be cancelled, not target errors: %+v", snap)
 	}
 }
 
@@ -151,24 +180,45 @@ func TestStartValidates(t *testing.T) {
 func TestSnapshotBuckets(t *testing.T) {
 	s := newStats(time.Now())
 	s.recordSent(100 * time.Millisecond)
-	s.recordResult(100*time.Millisecond, 20*time.Millisecond, 200, nil)
+	s.recordResult(1100*time.Millisecond, 20*time.Millisecond, 200, nil)
 	s.recordSent(1500 * time.Millisecond)
-	s.recordResult(1500*time.Millisecond, 40*time.Millisecond, 502, nil)
+	s.recordResult(2500*time.Millisecond, 40*time.Millisecond, 502, nil)
 	s.recordDropped()
 	s.finish()
 
 	snap := s.Snapshot()
-	if len(snap.Buckets) != 2 {
-		t.Fatalf("buckets = %d, want 2", len(snap.Buckets))
+	if len(snap.Buckets) != 3 {
+		t.Fatalf("buckets = %d, want 3", len(snap.Buckets))
 	}
-	if b := snap.Buckets[0]; b.Sent != 1 || b.Completed != 1 || b.Errors != 0 || b.MeanLatency() != 20*time.Millisecond {
+	if b := snap.Buckets[0]; b.Sent != 1 || b.Completed != 0 {
 		t.Errorf("bucket 0 = %+v", b)
 	}
-	if b := snap.Buckets[1]; b.Sent != 1 || b.Errors != 1 {
+	if b := snap.Buckets[1]; b.Sent != 1 || b.Completed != 1 || b.Errors != 0 || b.MeanLatency() != 20*time.Millisecond {
 		t.Errorf("bucket 1 = %+v", b)
+	}
+	if b := snap.Buckets[2]; b.Sent != 0 || b.Completed != 1 || b.Errors != 1 || b.MeanLatency() != 40*time.Millisecond {
+		t.Errorf("bucket 2 = %+v", b)
 	}
 	if snap.Errors != 1 || snap.Dropped != 1 || snap.Completed != 2 {
 		t.Errorf("snapshot = %+v", snap)
+	}
+}
+
+func TestSnapshotSeparatesCancellation(t *testing.T) {
+	s := newStats(time.Now())
+	s.recordSent(100 * time.Millisecond)
+	s.recordResult(200*time.Millisecond, 100*time.Millisecond, 0, context.Canceled)
+	s.finish()
+
+	snap := s.Snapshot()
+	if snap.Sent != 1 || snap.Completed != 0 || snap.Canceled != 1 || snap.Errors != 0 {
+		t.Errorf("snapshot = %+v", snap)
+	}
+	if snap.P50 != 0 || snap.Max != 0 {
+		t.Errorf("cancelled requests must not affect latency percentiles: %+v", snap)
+	}
+	if len(snap.Buckets) != 1 || snap.Buckets[0].Canceled != 1 || snap.Buckets[0].Completed != 0 {
+		t.Errorf("buckets = %+v", snap.Buckets)
 	}
 }
 

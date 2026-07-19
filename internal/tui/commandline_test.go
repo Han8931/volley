@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tabularasa/volley/internal/loadtest"
 	"github.com/tabularasa/volley/internal/model"
 )
 
@@ -256,6 +257,57 @@ func TestCommandEscCancels(t *testing.T) {
 	m = step(m, keyEsc)
 	if m.cmdActive {
 		t.Error("esc should cancel the command line")
+	}
+}
+
+func TestLoadEditTabCompletion(t *testing.T) {
+	m := sized()
+	m.loadStore.Root = t.TempDir()
+	for _, name := range []string{"spike-fast", "spike-slow", "steady"} {
+		if err := m.loadStore.Save(name, loadtest.Constant(1, time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m = m.openCommandLineWith(':', "loadedit ste")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "loadedit steady" {
+		t.Errorf("unique completion = %q, want %q", got, "loadedit steady")
+	}
+
+	m = m.openCommandLineWith(':', "loadedit spi")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "loadedit spike-" {
+		t.Errorf("common-prefix completion = %q, want %q", got, "loadedit spike-")
+	}
+	if !strings.Contains(m.statusMsg, "spike-fast") || !strings.Contains(m.statusMsg, "spike-slow") {
+		t.Errorf("ambiguous completion should list matches, status = %q", m.statusMsg)
+	}
+}
+
+func TestCommandHistoryNavigationRestoresDraft(t *testing.T) {
+	m := sized()
+	for _, command := range []string{"method post", "timeout 7s"} {
+		m = m.openCommandLineWith(':', command)
+		m = step(m, keyEnter)
+	}
+
+	m = m.openCommandLineWith(':', "loadedit dra")
+	m = step(m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.cmd.Value(); got != "timeout 7s" {
+		t.Errorf("first up = %q", got)
+	}
+	m = step(m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.cmd.Value(); got != "method post" {
+		t.Errorf("second up = %q", got)
+	}
+	m = step(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.cmd.Value(); got != "timeout 7s" {
+		t.Errorf("first down = %q", got)
+	}
+	m = step(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.cmd.Value(); got != "loadedit dra" {
+		t.Errorf("down should restore draft, got %q", got)
 	}
 }
 

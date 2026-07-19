@@ -17,12 +17,14 @@ import (
 // requires leaving Volley — E still drops to $EDITOR for raw-JSON precision.
 
 // shapeRateStep / shapeRateStepBig are the j/k and J/K rate increments;
-// shapeTimeStep / shapeTimeStepBig are the H/L and </> time increments.
+// shapeTimeStepFine, shapeTimeStep, and shapeTimeStepBig are the [/], H/L,
+// and </> time increments.
 const (
-	shapeRateStep    = 1
-	shapeRateStepBig = 10
-	shapeTimeStep    = time.Second
-	shapeTimeStepBig = 10 * time.Second
+	shapeRateStep     = 1
+	shapeRateStepBig  = 10
+	shapeTimeStepFine = 100 * time.Millisecond
+	shapeTimeStep     = time.Second
+	shapeTimeStepBig  = 10 * time.Second
 )
 
 // openShapeEditor enters the mode on name with p's shape as the working copy.
@@ -34,14 +36,19 @@ func (m Model) openShapeEditor(name string, p loadtest.Profile) Model {
 	m.shapeBase = p
 	m.shapePoints = append([]loadtest.Point(nil), p.Points...)
 	m.shapeBaseline = append([]loadtest.Point(nil), p.Points...)
+	m.shapeBaselineLimit = p.MaxRequests
+	m.shapeBaselineWorkers = p.MaxWorkers
 	m.shapeSel = 0
 	m.shapeConfirmDiscard = false
-	m.statusMsg = "shape edit: h/l point · j/k rate · H/L time · a/x add/del · w save · ⏎ save+run · esc exit"
+	m.statusMsg = "shape editor · controls are shown below the chart"
 	return m
 }
 
 // shapeDirty reports whether the working points differ from the loaded shape.
 func (m Model) shapeDirty() bool {
+	if m.shapeBase.MaxRequests != m.shapeBaselineLimit || m.shapeBase.MaxWorkers != m.shapeBaselineWorkers {
+		return true
+	}
 	if len(m.shapePoints) != len(m.shapeBaseline) {
 		return true
 	}
@@ -60,6 +67,7 @@ func (m Model) shapeProfile() loadtest.Profile {
 		Name:        m.shapeName,
 		Description: m.shapeBase.Description,
 		Points:      m.shapePoints,
+		MaxRequests: m.shapeBase.MaxRequests,
 		MaxWorkers:  m.shapeBase.MaxWorkers,
 	}
 }
@@ -100,10 +108,22 @@ func (m Model) updateShapeEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.adjustShapeTime(i, shapeTimeStep)
 	case "H":
 		m = m.adjustShapeTime(i, -shapeTimeStep)
+	case "]":
+		m = m.adjustShapeTime(i, shapeTimeStepFine)
+	case "[":
+		m = m.adjustShapeTime(i, -shapeTimeStepFine)
 	case ">":
 		m = m.adjustShapeTime(i, shapeTimeStepBig)
 	case "<":
 		m = m.adjustShapeTime(i, -shapeTimeStepBig)
+	case "+", "=":
+		m = m.adjustShapeRequestLimit(1)
+	case "-":
+		m = m.adjustShapeRequestLimit(-1)
+	case "c":
+		m = m.adjustShapeWorkers(1)
+	case "C":
+		m = m.adjustShapeWorkers(-1)
 	case "a":
 		m = m.addShapePoint(i)
 	case "x", "d":
@@ -131,6 +151,44 @@ func (m Model) updateShapeEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 	}
 	return m, nil
+}
+
+// adjustShapeRequestLimit changes the arrival cap one request at a time. When
+// enabling a limit on an unlimited profile, adjustment starts at the shape's
+// current planned total so a single decrement has an immediate effect.
+func (m Model) adjustShapeRequestLimit(delta int) Model {
+	limit := m.shapeBase.MaxRequests
+	if limit == 0 {
+		limit = m.shapeProfile().PlannedRequests()
+		if delta < 0 {
+			limit += delta
+		}
+	} else {
+		limit += delta
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	m.shapeBase.MaxRequests = limit
+	return m
+}
+
+// adjustShapeWorkers changes the concurrency cap. The stored zero value means
+// the default; stepping through the default keeps that compact representation.
+func (m Model) adjustShapeWorkers(delta int) Model {
+	workers := m.shapeBase.MaxWorkers
+	if workers == 0 {
+		workers = loadtest.DefaultMaxWorkers
+	}
+	workers += delta
+	if workers < 1 {
+		workers = 1
+	}
+	if workers == loadtest.DefaultMaxWorkers {
+		workers = 0
+	}
+	m.shapeBase.MaxWorkers = workers
+	return m
 }
 
 // adjustShapeRate nudges point i's rate by delta, clamped at zero.
@@ -213,6 +271,8 @@ func (m Model) saveShape(run bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.shapeBaseline = append([]loadtest.Point(nil), m.shapePoints...)
+	m.shapeBaselineLimit = m.shapeBase.MaxRequests
+	m.shapeBaselineWorkers = m.shapeBase.MaxWorkers
 	if run {
 		m.shapeEdit = false
 		return m.confirmLoadTest(p), nil
@@ -247,21 +307,84 @@ func (m Model) viewShapeEditor() string {
 	}
 
 	readout := fmt.Sprintf("point %d/%d · at %s · %.0f rps",
-		m.shapeSel+1, len(m.shapePoints), formatRunDuration(time.Duration(sel.At)), sel.RPS)
-	summary := dim(fmt.Sprintf("peak %.0f rps · %s · %d req total",
-		p.Peak(), formatRunDuration(p.Duration()), int(p.ExpectedArrivals(p.Duration()))))
+		m.shapeSel+1, len(m.shapePoints), time.Duration(sel.At), sel.RPS)
+	limit := "shape"
+	if p.MaxRequests > 0 {
+		limit = fmt.Sprintf("%d", p.MaxRequests)
+	}
+	workers := p.MaxWorkers
+	if workers == 0 {
+		workers = loadtest.DefaultMaxWorkers
+	}
+	shapeSummary := dim(fmt.Sprintf("peak %.0f rps · duration %s",
+		p.Peak(), formatRunDuration(p.Duration())))
+	runSummary := dim(fmt.Sprintf("requests %d (limit %s) · workers %d",
+		p.PlannedRequests(), limit, workers))
 
 	lines := []string{head, ""}
 	lines = append(lines, renderShapeChart(m.shapePoints, m.shapeSel, chartW, shapeChartRows)...)
 	lines = append(lines,
 		"",
 		lipgloss.NewStyle().Foreground(colOK).Render(readout),
-		summary,
+		shapeSummary,
+		runSummary,
 		"",
-		dim("h/l point · j/k rate ±1 · J/K ±10 · H/L time ±1s · </> ±10s"),
-		dim("a add · x delete · w save · ⏎ save + run · E raw JSON · esc exit"),
+		dim("CONTROLS"),
 	)
+	lines = append(lines, shapeEditorKeyHints(width-2)...)
 	return lipgloss.NewStyle().MaxWidth(width).Render(strings.Join(lines, "\n"))
+}
+
+// shapeEditorKeyHints renders a compact shortcut table. Two columns fit the
+// normal response pane; very narrow panes fall back to one so explanations are
+// never clipped into an unreadable sentence.
+func shapeEditorKeyHints(width int) []string {
+	bindings := [][2]string{
+		{"h/l", "select point"},
+		{"j/k", "rate ±1"},
+		{"J/K", "rate ±10"},
+		{"[/]", "time ±100ms"},
+		{"H/L", "time ±1s"},
+		{"</>", "time ±10s"},
+		{"-/+", "request limit"},
+		{"C/c", "worker cap"},
+		{"a", "add point"},
+		{"x", "delete point"},
+		{"w", "save"},
+		{"⏎", "save + run"},
+		{"E", "raw JSON"},
+		{"esc", "exit"},
+	}
+	columns := 2
+	if width < 38 {
+		columns = 1
+	}
+	gap := 2
+	cellWidth := width
+	if columns == 2 {
+		cellWidth = (width - gap) / 2
+	}
+	cell := func(binding [2]string) string {
+		const keyWidth = 4
+		labelWidth := cellWidth - keyWidth - 1
+		if labelWidth < 1 {
+			labelWidth = 1
+		}
+		key := lipgloss.NewStyle().Foreground(colOK).Bold(true).
+			Width(keyWidth).Align(lipgloss.Right).Render(binding[0])
+		label := dim(truncateRunes(binding[1], labelWidth))
+		return lipgloss.NewStyle().Width(cellWidth).MaxWidth(cellWidth).Render(key + " " + label)
+	}
+
+	rows := make([]string, 0, (len(bindings)+columns-1)/columns)
+	for i := 0; i < len(bindings); i += columns {
+		row := cell(bindings[i])
+		if columns == 2 && i+1 < len(bindings) {
+			row += strings.Repeat(" ", gap) + cell(bindings[i+1])
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // renderShapeChart draws the shape as filled columns with point markers: ◆ for

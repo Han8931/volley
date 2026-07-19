@@ -57,6 +57,9 @@ type Profile struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`
 	Points      []Point `json:"points"`
+	// MaxRequests stops scheduling after this many planned arrivals. Zero
+	// means the shape's full duration determines the request count.
+	MaxRequests int `json:"maxRequests,omitempty"`
 	// MaxWorkers bounds concurrent in-flight requests; 0 means
 	// DefaultMaxWorkers.
 	MaxWorkers int `json:"maxWorkers,omitempty"`
@@ -84,7 +87,21 @@ func (p Profile) Validate() error {
 	if p.MaxWorkers < 0 {
 		return errors.New("maxWorkers must not be negative")
 	}
+	if p.MaxRequests < 0 {
+		return errors.New("maxRequests must not be negative")
+	}
 	return nil
+}
+
+// PlannedRequests is the number of arrivals this profile will attempt. A
+// request limit caps the integral of the full shape; dropped arrivals still
+// count because the engine is open-loop.
+func (p Profile) PlannedRequests() int {
+	total := int(p.ExpectedArrivals(p.Duration()))
+	if p.MaxRequests > 0 && p.MaxRequests < total {
+		return p.MaxRequests
+	}
+	return total
 }
 
 // Duration is the total length of the run: the offset of the last point.

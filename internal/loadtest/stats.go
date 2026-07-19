@@ -1,6 +1,8 @@
 package loadtest
 
 import (
+	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -13,6 +15,7 @@ type Stats struct {
 	start     time.Time
 	latencies []time.Duration // completed requests, in completion order
 	errors    int
+	canceled  int
 	dropped   int
 	inFlight  int
 	buckets   []Bucket // per-second aggregates for the live chart
@@ -25,6 +28,7 @@ type Bucket struct {
 	Sent       int           // requests dispatched in this second
 	Completed  int           // responses (ok or error) received in this second
 	Errors     int           // completions that were transport errors or 5xx
+	Canceled   int           // completions aborted through context cancellation
 	SumLatency time.Duration // sum over Completed, for a mean
 }
 
@@ -39,17 +43,18 @@ func (b Bucket) MeanLatency() time.Duration {
 // Snapshot is a point-in-time copy of a run's aggregate results, safe to
 // render while the run continues.
 type Snapshot struct {
-	Elapsed   time.Duration
-	Done      bool
-	Sent      int // dispatched to a worker
-	Completed int
-	Errors    int // transport errors + 5xx responses
-	Dropped   int // scheduled sends that found no free worker
-	InFlight  int
-	AchievedRPS float64 // completions per second of elapsed time
+	Elapsed       time.Duration
+	Done          bool
+	Sent          int // dispatched to a worker
+	Completed     int // responses/errors completed; excludes cancellations
+	Errors        int // transport errors + 5xx responses
+	Canceled      int // requests aborted by stopping/cancelling the run
+	Dropped       int // scheduled sends that found no free worker
+	InFlight      int
+	AchievedRPS   float64 // completions per second of elapsed time
 	P50, P95, P99 time.Duration
-	Max       time.Duration
-	Buckets   []Bucket
+	Max           time.Duration
+	Buckets       []Bucket
 }
 
 func newStats(start time.Time) *Stats {
@@ -76,14 +81,20 @@ func (s *Stats) recordSent(offset time.Duration) {
 	s.bucketAt(offset).Sent++
 }
 
-// recordResult notes a completed request. Transport errors and 5xx responses
-// count as errors: both mean the target failed under this load.
+// recordResult notes a completed request in the bucket where it completed.
+// Context cancellation is kept separate from target failures so stopping a
+// run does not make the service's error rate look worse.
 func (s *Stats) recordResult(offset, latency time.Duration, status int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inFlight--
-	s.latencies = append(s.latencies, latency)
 	b := s.bucketAt(offset)
+	if errors.Is(err, context.Canceled) {
+		s.canceled++
+		b.Canceled++
+		return
+	}
+	s.latencies = append(s.latencies, latency)
 	b.Completed++
 	b.SumLatency += latency
 	if err != nil || status >= 500 {
@@ -123,11 +134,12 @@ func (s *Stats) Snapshot() Snapshot {
 		Done:      s.done,
 		Completed: len(s.latencies),
 		Errors:    s.errors,
+		Canceled:  s.canceled,
 		Dropped:   s.dropped,
 		InFlight:  s.inFlight,
 		Buckets:   append([]Bucket(nil), s.buckets...),
 	}
-	snap.Sent = snap.Completed + s.inFlight
+	snap.Sent = snap.Completed + snap.Canceled + s.inFlight
 	if secs := elapsed.Seconds(); secs > 0 {
 		snap.AchievedRPS = float64(snap.Completed) / secs
 	}

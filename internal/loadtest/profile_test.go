@@ -32,6 +32,7 @@ func TestValidate(t *testing.T) {
 		{"decreasing offsets", Profile{Points: []Point{
 			{At: 0, RPS: 1}, {At: Duration(5 * time.Second), RPS: 1}, {At: Duration(2 * time.Second), RPS: 1}}}, false},
 		{"zero duration", Profile{Points: []Point{{At: 0, RPS: 1}, {At: 0, RPS: 2}}}, false},
+		{"negative request limit", Profile{Points: []Point{{At: 0, RPS: 1}, {At: Duration(time.Second), RPS: 1}}, MaxRequests: -1}, false},
 		{"vertical jump allowed", Spike(1, 10, time.Second, time.Second, time.Second), true},
 	} {
 		err := tc.p.Validate()
@@ -46,6 +47,21 @@ func TestValidate(t *testing.T) {
 		if err := p.Validate(); err != nil {
 			t.Errorf("default profile %q invalid: %v", p.Name, err)
 		}
+	}
+}
+
+func TestPlannedRequests(t *testing.T) {
+	p := Constant(10, 10*time.Second)
+	if got := p.PlannedRequests(); got != 100 {
+		t.Errorf("unlimited planned requests = %d, want 100", got)
+	}
+	p.MaxRequests = 23
+	if got := p.PlannedRequests(); got != 23 {
+		t.Errorf("limited planned requests = %d, want 23", got)
+	}
+	p.MaxRequests = 200
+	if got := p.PlannedRequests(); got != 100 {
+		t.Errorf("limit beyond shape = %d, want 100", got)
 	}
 }
 
@@ -115,6 +131,7 @@ func TestExpectedArrivals(t *testing.T) {
 func TestProfileJSONRoundTrip(t *testing.T) {
 	orig := Spike(5, 100, 20*time.Second, 10*time.Second, 20*time.Second)
 	orig.MaxWorkers = 32
+	orig.MaxRequests = 123
 	b, err := json.Marshal(orig)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +144,7 @@ func TestProfileJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(b, &back); err != nil {
 		t.Fatal(err)
 	}
-	if len(back.Points) != len(orig.Points) || back.Name != orig.Name || back.MaxWorkers != 32 {
+	if len(back.Points) != len(orig.Points) || back.Name != orig.Name || back.MaxWorkers != 32 || back.MaxRequests != 123 {
 		t.Fatalf("round trip mismatch: %+v vs %+v", back, orig)
 	}
 	for i := range back.Points {

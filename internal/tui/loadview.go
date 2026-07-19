@@ -43,13 +43,15 @@ type loadState struct {
 
 	// The dedicated shape-editing mode (see shapeeditor.go): an interactive
 	// point editor for building custom load shapes without leaving Volley.
-	shapeEdit           bool
-	shapeName           string           // profile name the shape saves to
-	shapeBase           loadtest.Profile // carries description/maxWorkers through
-	shapePoints         []loadtest.Point // working copy being edited
-	shapeBaseline       []loadtest.Point // last saved/loaded points, for dirty checks
-	shapeSel            int              // selected point index
-	shapeConfirmDiscard bool             // esc pressed with unsaved changes
+	shapeEdit            bool
+	shapeName            string           // profile name the shape saves to
+	shapeBase            loadtest.Profile // carries description and run limits
+	shapePoints          []loadtest.Point // working copy being edited
+	shapeBaseline        []loadtest.Point // last saved/loaded points, for dirty checks
+	shapeBaselineLimit   int              // saved maxRequests value for dirty checks
+	shapeBaselineWorkers int              // saved maxWorkers value for dirty checks
+	shapeSel             int              // selected point index
+	shapeConfirmDiscard  bool             // esc pressed with unsaved changes
 }
 
 // loadTickMsg drives snapshot polling while a run is active.
@@ -282,8 +284,8 @@ func (m Model) confirmLoadTest(p loadtest.Profile) Model {
 	}
 	m.loadConfirm = true
 	m.pendingProfile = p
-	m.statusMsg = fmt.Sprintf("run %q — peak %.0f rps for %s against %s %s? (y/n)",
-		p.Name, p.Peak(), formatRunDuration(p.Duration()),
+	m.statusMsg = fmt.Sprintf("run %q — peak %.0f rps · up to %d req · %s against %s %s? (y/n)",
+		p.Name, p.Peak(), p.PlannedRequests(), formatRunDuration(p.Duration()),
 		built.Method, truncateMiddle(built.URL, 40))
 	return m
 }
@@ -315,8 +317,7 @@ func (m Model) startLoadTest(p loadtest.Profile) (tea.Model, tea.Cmd) {
 	run, err := loadtest.Runner{
 		Profile: p,
 		Do: func(ctx context.Context) (int, error) {
-			resp := httpx.Do(ctx, built)
-			return resp.StatusCode, resp.Err
+			return httpx.DoLoad(ctx, built)
 		},
 	}.Start(context.Background())
 	if err != nil {
@@ -345,8 +346,9 @@ func (m Model) handleLoadTick(msg loadTickMsg) (tea.Model, tea.Cmd) {
 		if m.loadStopped {
 			verb = "stopped"
 		}
-		m.statusMsg = fmt.Sprintf("load test %s: %d ok · %d errors · %d dropped — esc to close",
-			verb, m.loadSnap.Completed-m.loadSnap.Errors, m.loadSnap.Errors, m.loadSnap.Dropped)
+		m.statusMsg = fmt.Sprintf("load test %s: %d ok · %d errors · %d cancelled · %d dropped — esc to close",
+			verb, m.loadSnap.Completed-m.loadSnap.Errors,
+			m.loadSnap.Errors, m.loadSnap.Canceled, m.loadSnap.Dropped)
 		return m, nil
 	}
 	return m, loadTick(m.loadSeq)
@@ -467,7 +469,7 @@ func achievedSeries(snap loadtest.Snapshot, secs int) []float64 {
 // formatRunDuration trims the zero tails Go puts on round durations — "1m0s"
 // reads as "1m", "2h0m0s" as "2h" — without touching plain seconds like "30s".
 func formatRunDuration(d time.Duration) string {
-	s := d.Round(time.Second).String()
+	s := d.String()
 	if strings.HasSuffix(s, "m0s") {
 		s = strings.TrimSuffix(s, "0s")
 	}
@@ -499,7 +501,7 @@ func (m Model) viewLoadPicker() string {
 		dim("shape"),
 		keyHint(sparkline(targetSeries(p), min(width, 48))),
 		dim(fmt.Sprintf("peak %.0f rps · %s · %d req total",
-			p.Peak(), formatRunDuration(p.Duration()), int(p.ExpectedArrivals(p.Duration())))),
+			p.Peak(), formatRunDuration(p.Duration()), p.PlannedRequests())),
 		"",
 		dim("⏎ run against the current request · e edit shape · n new · esc cancel"),
 	)
@@ -523,8 +525,8 @@ func (m Model) viewLoadRun() string {
 		dim(fmt.Sprintf("  %s / %s", formatRunDuration(snap.Elapsed), formatRunDuration(p.Duration())))
 
 	okCount := snap.Completed - snap.Errors
-	counts := fmt.Sprintf(" ok %d · err %d · drop %d · in-flight %d",
-		okCount, snap.Errors, snap.Dropped, snap.InFlight)
+	counts := fmt.Sprintf(" ok %d · err %d · cancel %d · drop %d · in-flight %d",
+		okCount, snap.Errors, snap.Canceled, snap.Dropped, snap.InFlight)
 	countStyle := dim(counts)
 	if snap.Errors > 0 || snap.Dropped > 0 {
 		countStyle = lipgloss.NewStyle().Foreground(colMethod).Render(counts)

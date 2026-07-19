@@ -143,9 +143,12 @@ type searchState struct {
 
 // cmdlineState is the ":" command / "/" search input line.
 type cmdlineState struct {
-	cmd       textinput.Model
-	cmdActive bool
-	cmdKind   rune // ':' or '/'
+	cmd           textinput.Model
+	cmdActive     bool
+	cmdKind       rune // ':' or '/'
+	cmdHistory    []string
+	cmdHistoryIdx int
+	cmdDraft      string
 }
 
 // promptState holds the transient overlays and confirmations that gate input:

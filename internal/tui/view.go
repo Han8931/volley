@@ -506,7 +506,7 @@ func (m Model) viewStatusBar() string {
 	case m.focusHints:
 		hints = " jump: 1 tree · 2 method · 3 url · 4 request · 5 response · esc cancel"
 	case m.shapeEdit:
-		hints = " shape: h/l point · j/k rate · H/L time · a/x add/del · w save · ⏎ run · esc"
+		hints = " shape editor · controls shown below the chart"
 	case m.loadRunning():
 		hints = " load test running · esc stop"
 	case m.loadRun != nil && m.focus == focusResponse:

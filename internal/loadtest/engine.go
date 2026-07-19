@@ -34,6 +34,7 @@ type Run struct {
 	stats  *Stats
 	done   chan struct{}
 	cancel context.CancelFunc
+	start  time.Time
 }
 
 // Start validates the runner and begins the paced run. The run stops early
@@ -47,10 +48,12 @@ func (r Runner) Start(ctx context.Context) (*Run, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	start := time.Now()
 	run := &Run{
-		stats:  newStats(time.Now()),
+		stats:  newStats(start),
 		done:   make(chan struct{}),
 		cancel: cancel,
+		start:  start,
 	}
 	go run.pace(ctx, r)
 	return run, nil
@@ -84,7 +87,6 @@ func (run *Run) pace(ctx context.Context, r Runner) {
 
 	slots := make(chan struct{}, r.Profile.maxWorkers())
 	total := r.Profile.Duration()
-	start := time.Now()
 	ticker := time.NewTicker(paceTick)
 	defer ticker.Stop()
 
@@ -95,8 +97,11 @@ func (run *Run) pace(ctx context.Context, r Runner) {
 			return
 		case <-ticker.C:
 		}
-		elapsed := time.Since(start)
+		elapsed := time.Since(run.start)
 		due := int(r.Profile.ExpectedArrivals(elapsed))
+		if r.Profile.MaxRequests > 0 && due > r.Profile.MaxRequests {
+			due = r.Profile.MaxRequests
+		}
 		for dispatched < due {
 			dispatched++
 			select {
@@ -108,11 +113,14 @@ func (run *Run) pace(ctx context.Context, r Runner) {
 					run.stats.recordSent(offset)
 					begin := time.Now()
 					status, err := r.Do(ctx)
-					run.stats.recordResult(offset, time.Since(begin), status, err)
+					run.stats.recordResult(time.Since(run.start), time.Since(begin), status, err)
 				}(elapsed)
 			default:
 				run.stats.recordDropped()
 			}
+		}
+		if r.Profile.MaxRequests > 0 && dispatched >= r.Profile.MaxRequests {
+			return
 		}
 		if elapsed >= total {
 			return

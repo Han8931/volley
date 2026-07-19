@@ -106,3 +106,40 @@ func Do(ctx context.Context, req model.Request) model.Response {
 		Truncated:  truncated,
 	}
 }
+
+// DoLoad executes one load-test request and returns only the outcome needed by
+// the load engine. Unlike Do, it does not retain response bodies or headers.
+// The body is streamed to io.Discard so large responses do not multiply the
+// load generator's memory use, and reading it fully preserves connection reuse.
+func DoLoad(ctx context.Context, req model.Request) (int, error) {
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var body io.Reader
+	if req.Body != "" {
+		body = strings.NewReader(req.Body)
+	}
+	hr, err := http.NewRequestWithContext(ctx, req.Method, req.URL, body)
+	if err != nil {
+		return 0, err
+	}
+	for _, h := range req.Headers {
+		if h.Enabled && h.Name != "" {
+			hr.Header.Set(h.Name, h.Value)
+		}
+	}
+
+	resp, err := sharedClient.Do(hr)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return resp.StatusCode, err
+	}
+	return resp.StatusCode, nil
+}

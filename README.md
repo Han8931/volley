@@ -170,7 +170,7 @@ Press the **TEST** button (or `:loadtest`, alias `:lt`) to pick a load profile �
 a plot of target request rate over time. The picker previews each shape as a
 sparkline with its peak rate, duration, and total request count. After a y/n
 confirmation showing exactly what will be fired at which URL, the response pane
-becomes a live run view: ok/error/dropped counters, achieved vs. target RPS,
+becomes a live run view: ok/error/cancelled/dropped counters, achieved vs. target RPS,
 p50/p95/p99/max latency, and target + achieved charts.
 
 | Key / command | Action |
@@ -178,7 +178,7 @@ p50/p95/p99/max latency, and target + achieved charts.
 | `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `e` edit · `n` new · `esc` cancel) |
 | `:loadtest <name>` / `:lt <name>` | run a named profile directly |
 | `:loadnew <name> [template]` | create your own shape in the shape editor, starting from a template profile |
-| `:loadedit <name>` | reshape a saved profile in the shape editor |
+| `:loadedit <name>` | reshape a saved profile in the shape editor (`Tab` completes profile names) |
 | `esc` | stop a running test (in-flight requests are cancelled) |
 | `esc` / `T` on the results | close the results / run the same profile again |
 
@@ -187,11 +187,16 @@ p50/p95/p99/max latency, and target + achieved charts.
 `:loadnew` / `:loadedit` (or `e` in the picker) open a dedicated editing mode:
 the profile is drawn as a chart with its points marked, and you sculpt it with
 Vim-style keys — `h/l` select a point, `j/k` (`J/K`) adjust its rate by 1 (10)
-rps, `H/L` (`</>`') move it in time by 1s (10s), `a` adds a point, `x` deletes
-one. Moving a point onto its neighbour's time makes a vertical jump. `w` saves
-(validated), `⏎` saves and goes straight to the run confirmation, `E` opens the
-raw JSON in `$EDITOR` for exact values, and `esc` leaves — asking first if you
-have unsaved changes.
+rps, `[/]` move it in time by 100ms, and `H/L` (`</>`) move it by 1s (10s).
+`-/+` adjusts the request limit and `C/c` adjusts the worker cap. `a` adds a
+point and `x` deletes one. Moving a point onto its neighbour's time makes a
+vertical jump. `w` saves (validated), `⏎` saves and goes straight to the run
+confirmation, `E` opens the raw JSON in `$EDITOR` for exact values, and `esc`
+leaves — asking first if you have unsaved changes.
+
+The `:` command line keeps an in-memory history for the session: `↑`/`↓` walk
+older/newer commands and restore the command you were drafting when you return
+to the newest entry.
 
 Profiles are plain JSON in `loadprofiles/` beside your collections; the five
 default shapes (constant, ramp-up, spike, step, sawtooth) are written there on
@@ -202,6 +207,8 @@ offset make a vertical jump:
 ```json
 {
   "name": "spike",
+  "maxRequests": 1000,
+  "maxWorkers": 64,
   "points": [
     {"at": "0s",  "rps": 5},
     {"at": "20s", "rps": 5},
@@ -213,10 +220,14 @@ offset make a vertical jump:
 }
 ```
 
+`maxRequests` optionally ends scheduling once that many planned arrivals have
+been attempted; zero or omission runs the complete shape. Because pacing is
+open-loop, arrivals that are dropped still count toward this limit.
 `maxWorkers` (default 64) caps concurrent in-flight requests; scheduled sends
 that find no free worker are counted as **dropped** — the signal that the
 target can't keep up at the plotted rate. Errors are transport failures plus
-5xx responses.
+5xx responses; requests aborted by stopping a run are counted separately as
+**cancelled**.
 
 ## Storage and variables
 

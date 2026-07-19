@@ -1107,7 +1107,7 @@ func TestTabSwitchingAndBodyEdit(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = m.setFocus(focusRequest)
 
-	m = step(m, runes("L")) // next tab: Body
+	m = step(m, runes("]")) // next tab: Body
 	if m.reqPane.tab != tabBody {
 		t.Fatalf("tab = %d, want Body", m.reqPane.tab)
 	}
@@ -1125,7 +1125,7 @@ func TestTabSwitchingAndBodyEdit(t *testing.T) {
 func TestBodyVimModalFlow(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = m.setFocus(focusRequest)
-	m = step(m, runes("L")) // Body tab
+	m = step(m, runes("]")) // Body tab
 
 	// i activates the editor in INSERT.
 	m = step(m, runes("i"))

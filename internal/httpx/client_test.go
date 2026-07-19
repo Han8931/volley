@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -135,5 +136,48 @@ func TestDo_SmallBodyNotTruncated(t *testing.T) {
 	}
 	if string(resp.Body) != "hello" {
 		t.Errorf("body = %q, want hello", resp.Body)
+	}
+}
+
+func TestDoLoadDrainsLargeBody(t *testing.T) {
+	const chunks = 12
+	chunk := make([]byte, 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		for i := 0; i < chunks; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				t.Errorf("write response: %v", err)
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	status, err := DoLoad(context.Background(), model.Request{Method: "GET", URL: srv.URL})
+	if err != nil {
+		t.Fatalf("DoLoad: %v", err)
+	}
+	if status != http.StatusAccepted {
+		t.Errorf("status = %d, want %d", status, http.StatusAccepted)
+	}
+}
+
+func TestDoLoadParentContextCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	status, err := DoLoad(ctx, model.Request{Method: "GET", URL: srv.URL})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context cancellation", err)
+	}
+	if status != 0 {
+		t.Errorf("status = %d, want 0 before response", status)
 	}
 }

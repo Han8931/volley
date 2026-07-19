@@ -32,6 +32,10 @@ func (m Model) openCommandLineWith(kind rune, value string) Model {
 	m.cmd.SetValue(value)
 	m.cmd.CursorEnd()
 	m.cmd.Focus()
+	if kind == ':' {
+		m.cmdHistoryIdx = len(m.cmdHistory)
+		m.cmdDraft = value
+	}
 	return m
 }
 
@@ -75,9 +79,24 @@ func (m Model) updateCommandLine(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		return m.closeCommandLine(), nil
+	case tea.KeyUp:
+		if m.cmdKind == ':' {
+			return m.previousCommand(), nil
+		}
+	case tea.KeyDown:
+		if m.cmdKind == ':' {
+			return m.nextCommand(), nil
+		}
+	case tea.KeyTab:
+		if m.cmdKind == ':' {
+			return m.completeLoadEdit(), nil
+		}
 	case tea.KeyEnter:
 		input := m.cmd.Value()
 		kind := m.cmdKind
+		if kind == ':' {
+			m = m.rememberCommand(input)
+		}
 		m = m.closeCommandLine()
 		if kind == ':' {
 			return m.executeCommand(input)
@@ -87,6 +106,118 @@ func (m Model) updateCommandLine(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.cmd, cmd = m.cmd.Update(msg)
 	return m, cmd
+}
+
+const commandHistoryLimit = 100
+
+// rememberCommand adds a non-empty command to the in-memory history. Adjacent
+// duplicates are collapsed, matching common shell history behavior.
+func (m Model) rememberCommand(input string) Model {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return m
+	}
+	if len(m.cmdHistory) == 0 || m.cmdHistory[len(m.cmdHistory)-1] != input {
+		m.cmdHistory = append(m.cmdHistory, input)
+		if len(m.cmdHistory) > commandHistoryLimit {
+			m.cmdHistory = append([]string(nil), m.cmdHistory[len(m.cmdHistory)-commandHistoryLimit:]...)
+		}
+	}
+	m.cmdHistoryIdx = len(m.cmdHistory)
+	return m
+}
+
+func (m Model) previousCommand() Model {
+	if len(m.cmdHistory) == 0 {
+		return m
+	}
+	if m.cmdHistoryIdx >= len(m.cmdHistory) {
+		m.cmdDraft = m.cmd.Value()
+		m.cmdHistoryIdx = len(m.cmdHistory)
+	}
+	if m.cmdHistoryIdx > 0 {
+		m.cmdHistoryIdx--
+	}
+	m.cmd.SetValue(m.cmdHistory[m.cmdHistoryIdx])
+	m.cmd.CursorEnd()
+	return m
+}
+
+func (m Model) nextCommand() Model {
+	if m.cmdHistoryIdx >= len(m.cmdHistory) {
+		return m
+	}
+	m.cmdHistoryIdx++
+	if m.cmdHistoryIdx == len(m.cmdHistory) {
+		m.cmd.SetValue(m.cmdDraft)
+	} else {
+		m.cmd.SetValue(m.cmdHistory[m.cmdHistoryIdx])
+	}
+	m.cmd.CursorEnd()
+	return m
+}
+
+// completeLoadEdit completes a profile name for :loadedit and its :ltedit
+// alias. A unique match is inserted; multiple matches extend to their shared
+// prefix and are reported in the status line.
+func (m Model) completeLoadEdit() Model {
+	value := m.cmd.Value()
+	verb, prefix, ok := strings.Cut(value, " ")
+	if !ok {
+		verb, prefix = value, ""
+	}
+	if (verb != "loadedit" && verb != "ltedit") || strings.Contains(strings.TrimSpace(prefix), " ") {
+		return m
+	}
+	m.statusMsg = ""
+	prefix = strings.TrimSpace(prefix)
+	if err := m.loadStore.EnsureDefaults(); err != nil {
+		m.statusMsg = "load profiles unavailable: " + err.Error()
+		return m
+	}
+	profiles, err := m.loadStore.List()
+	if err != nil {
+		m.statusMsg = "load profiles unavailable: " + err.Error()
+		return m
+	}
+	matches := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		if strings.HasPrefix(p.Name, prefix) {
+			matches = append(matches, p.Name)
+		}
+	}
+	if len(matches) == 0 {
+		m.statusMsg = "no load profile matching " + prefix
+		return m
+	}
+	completed := matches[0]
+	if len(matches) > 1 {
+		completed = commonPrefix(matches)
+		m.statusMsg = "profiles: " + strings.Join(matches, " · ")
+	}
+	m.cmd.SetValue(verb + " " + completed)
+	m.cmd.CursorEnd()
+	return m
+}
+
+func commonPrefix(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	prefix := []rune(values[0])
+	for _, value := range values[1:] {
+		runes := []rune(value)
+		n := len(prefix)
+		if len(runes) < n {
+			n = len(runes)
+		}
+		i := 0
+		for i < n && prefix[i] == runes[i] {
+			i++
+		}
+		prefix = prefix[:i]
+	}
+	return string(prefix)
 }
 
 // executeCommand interprets a ":" ex-style command.
@@ -340,7 +471,7 @@ func (m Model) saveCurrentRequest(name string) (Model, bool) {
 		return m, false
 	}
 	m.currentName = name
-	m.baseline = req // current edits are now the on-disk state
+	m.baseline = req      // current edits are now the on-disk state
 	m = m.syncActiveTab() // :save <newname> repoints the active tab too
 	m.statusMsg = "saved " + name
 	m.refreshCollections()

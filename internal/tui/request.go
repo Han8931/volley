@@ -178,10 +178,10 @@ func (p *requestPane) updateNormal(msg tea.KeyMsg) tea.Cmd {
 			p.headers.UpdateNormal(msg)
 		}
 		return nil
-	case "]", "L":
+	case "]":
 		p.selectTab(p.tab + 1)
 		return nil
-	case "[", "H":
+	case "[":
 		p.selectTab(p.tab - 1)
 		return nil
 	}
@@ -279,7 +279,7 @@ func (p requestPane) tabBar() string {
 	// narrow rather than letting it truncate mid-word (view clamps as backstop).
 	hint := "   Tab to focus"
 	if p.focused {
-		hint = "   H/L or [ ]"
+		hint = "   [ ] switch"
 	}
 	if p.width <= 0 || lipgloss.Width(bar)+len(hint) <= p.width {
 		bar += dim(hint)

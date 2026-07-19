@@ -58,8 +58,7 @@ func TestTablineAlwaysReserved(t *testing.T) {
 	}
 }
 
-// H/L walk the open tabs everywhere except the request pane, where they must
-// stay bound to the pane's own sub-tab switching.
+// H/L walk the open request tabs from any focused pane.
 func TestHLSwitchesOpenTabs(t *testing.T) {
 	m := twoTabModel(t).setFocus(focusURL)
 	m = urlNormal(m) // leave URL typing mode so H/L are nav keys
@@ -70,6 +69,19 @@ func TestHLSwitchesOpenTabs(t *testing.T) {
 	m = step(m, runes("H"))
 	if m.activeTab != 0 {
 		t.Fatalf("H should return to tab 0, got %d", m.activeTab)
+	}
+}
+
+func TestRequestSubTabsUseBracketsOnly(t *testing.T) {
+	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40}).setFocus(focusRequest)
+	start := m.reqPane.tab
+	m = step(m, runes("L"))
+	if m.reqPane.tab != start {
+		t.Fatalf("L must not switch request sub-tabs, moved %d->%d", start, m.reqPane.tab)
+	}
+	m = step(m, runes("]"))
+	if m.reqPane.tab == start {
+		t.Fatal("] should switch request sub-tabs")
 	}
 }
 

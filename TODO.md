@@ -1,6 +1,6 @@
 # Volley — Roadmap & UX Ideas
 
-_Last updated: 2026-07-05_
+_Last updated: 2026-07-19_
 
 Ideas to grow Volley from a functional MVP into a tool that a Postman/Bruno user
 would happily switch to **in the terminal**. Each item notes **why** it matters
@@ -59,18 +59,46 @@ These are the things whose absence makes a Postman user bounce.
       toward unsaved-changes detection. Injected header is appended last so it
       overrides a hand-written one. Tested at the model, vars, storage, and
       component levels. _Follow-up: OAuth2 flows are out of scope for now._
-- [ ] **Environments** — multiple named variable sets (dev/staging/prod) that
-      switch instantly (`:env prod`), persisted as files under
-      `~/.config/volley/environments/*.json`. Show the active env in the status
-      bar. **Why:** the single most-used Postman/Bruno feature; today's `:set`
-      vars are one unnamed in-memory scope and vanish on exit. **Effort: M.**
-      _Touchpoints: `internal/vars` (persistence + scopes), status bar._
-- [ ] **Persist & scope variables** — resolution order: request → environment →
-      collection → global → OS env. Persist non-secret vars. **Why:** Bruno/Postman
-      scoping. **Effort: M.** _Builds on Environments._
-      _Done: unresolved `{{name}}` placeholders are surfaced as a status-bar
-      warning before send (`vars.Unresolved`), listing exactly which vars are
-      still unbound. Persistence + scoping remain._
+- [ ] **Named environments and reusable variables** — persistent dev/staging/prod
+      variable sets that switch instantly. **Why:** repeated base URLs, tenant
+      IDs, tokens, and test accounts should not need to be re-entered for every
+      API-testing session. **Effort: M.**
+  - **Current baseline:** `internal/vars.Store` provides unnamed, in-memory
+    `:set name=value` overrides and falls back to process environment variables;
+    `vars.Unresolved` already warns about unbound `{{name}}` placeholders.
+  - [ ] Introduce a resolver with explicit precedence: session `:set` override →
+        active named environment → future collection/global scopes → process
+        environment. Keep unknown placeholders unchanged and report their names,
+        never resolved values. **S.**
+  - [ ] Add a versioned environment DTO and atomic store under
+        `~/.config/volley/environments/<name>.json`; validate names against
+        absolute/traversal paths, use `0600` files, and tolerate one corrupt file
+        without hiding the other environments. **S–M.**
+  - [ ] Add commands: `:env` (show current), `:env <name>` (switch), `:envlist`,
+        `:envnew <name>`, `:envset name=value`, `:envunset <variable>`, and
+        `:envdelete <name>` with confirmation. Keep `:set` as a non-persistent
+        session override and add a way to clear overrides. **M.**
+  - [ ] Add Tab completion for environment names and variable names, plus
+        Up/Down command-history compatibility for the new commands. **S.**
+  - [ ] Show the active environment in the persistent status/tab area and show
+        variable names in an environment inspector; mask values marked sensitive
+        and never place resolved secrets in status messages. **M.**
+  - [ ] Persist the selected environment in session/config state, but resolve
+        and freeze a request—including load-test workers—when Send/TEST starts so
+        switching environments mid-flight cannot change an active run. **S.**
+  - [ ] Define safe secret behavior for the MVP: local environment files are
+        private (`0600`) and outside collections, sensitive fields are masked,
+        and exports omit them by default. OS environment references remain the
+        recommended option until the dedicated secrets-management feature lands.
+        **S–M.**
+  - [ ] Cover precedence, switching, persistence/legacy loading, corrupt files,
+        masking, unresolved warnings, auth/query/body expansion, completion, and
+        frozen normal/load-test requests with unit and TUI integration tests.
+        **M.**
+  - **Acceptance:** after `:env dev`, every `{{name}}` resolves consistently in
+    URL, headers, query, body, and auth; restarting Volley restores the selected
+    environment; `:set` can temporarily override it; changing environments does
+    not mutate an in-flight request or load test.
 - [ ] **Body types + auto Content-Type** — pick a body mode: raw (JSON/text/XML),
       `x-www-form-urlencoded`, `multipart/form-data` (with file fields), and
       GraphQL (query + variables). Auto-set `Content-Type` unless overridden.

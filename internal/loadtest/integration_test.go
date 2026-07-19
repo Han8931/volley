@@ -11,8 +11,8 @@ import (
 	"github.com/tabularasa/volley/internal/model"
 )
 
-// TestEngineDrivesHTTPX exercises the wiring the TUI will use: the engine's
-// DoFunc wrapping httpx.Do against a live server, pooled connections and all.
+// TestEngineDrivesHTTPX exercises the wiring the TUI uses: the engine's DoFunc
+// wrapping httpx.DoLoad against a live server, pooled connections and all.
 func TestEngineDrivesHTTPX(t *testing.T) {
 	const serverDelay = 5 * time.Millisecond
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,8 +25,7 @@ func TestEngineDrivesHTTPX(t *testing.T) {
 	run, err := Runner{
 		Profile: shortConstant(50, 300*time.Millisecond),
 		Do: func(ctx context.Context) (int, error) {
-			resp := httpx.Do(ctx, req)
-			return resp.StatusCode, resp.Err
+			return httpx.DoLoad(ctx, req)
 		},
 	}.Start(context.Background())
 	if err != nil {

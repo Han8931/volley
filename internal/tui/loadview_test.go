@@ -230,8 +230,23 @@ func TestShapeEditorKeys(t *testing.T) {
 	if got := m.shapeProfile().Duration(); got != 31*time.Second {
 		t.Errorf("duration = %v, want 31s", got)
 	}
+	// ] provides fine-grained 100ms timing control.
+	m = step(m, runes("]"))
+	if got := m.shapeProfile().Duration(); got != 31100*time.Millisecond {
+		t.Errorf("fine duration = %v, want 31.1s", got)
+	}
+	// Run details are editable without leaving the shape view.
+	planned := m.shapeProfile().PlannedRequests()
+	m = step(m, runes("-"))
+	if got, want := m.shapeProfile().MaxRequests, planned-1; got != want {
+		t.Errorf("request limit = %d, want %d", got, want)
+	}
+	m = step(m, runes("c"))
+	if got := m.shapeProfile().MaxWorkers; got != loadtest.DefaultMaxWorkers+1 {
+		t.Errorf("max workers = %d, want %d", got, loadtest.DefaultMaxWorkers+1)
+	}
 	// H beyond the previous point clamps against it.
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 41; i++ {
 		m = step(m, runes("H"))
 	}
 	if got := time.Duration(m.shapePoints[1].At); got != 0 {
@@ -254,7 +269,7 @@ func TestShapeEditorKeys(t *testing.T) {
 
 	// The editor renders chart, readout, and marker.
 	view := stripANSI(m.View())
-	for _, want := range []string{"SHAPE constant", "point 2/2", "rps", "●"} {
+	for _, want := range []string{"SHAPE constant", "point 2/2", "rps", "requests", "workers", "CONTROLS", "select point", "time ±100ms", "request limit", "save + run", "●"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("editor view missing %q:\n%s", want, view)
 		}
