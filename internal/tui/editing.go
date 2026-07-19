@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"net/url"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tabularasa/volley/internal/build"
 	"github.com/tabularasa/volley/internal/model"
 )
 
@@ -30,10 +30,7 @@ func (m Model) rawRequest() model.Request {
 // buildRequest merges the URL bar and request pane into one Request, then
 // expands {{variables}} and folds query params into the URL.
 func (m Model) buildRequest() model.Request {
-	req := m.resolver().Apply(m.rawRequest())
-	req = req.ApplyAuth() // turn the auth helper into a header/query param
-	req.URL = appendQuery(req.URL, req.Query)
-	return req
+	return build.Final(m.rawRequest(), m.resolver())
 }
 
 // dirty reports whether the current edits diverge from the last saved or loaded
@@ -193,20 +190,4 @@ func (m Model) performPending() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
-}
-
-// appendQuery merges enabled query rows into base's query string.
-func appendQuery(base string, kvs []model.KV) string {
-	u, err := url.Parse(base)
-	if err != nil {
-		return base
-	}
-	q := u.Query()
-	for _, kv := range kvs {
-		if kv.Enabled && kv.Key != "" {
-			q.Add(kv.Key, kv.Value)
-		}
-	}
-	u.RawQuery = q.Encode()
-	return u.String()
 }

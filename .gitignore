@@ -1,3 +1,11 @@
 /volley
 *.out
 .DS_Store
+
+# GUI (Wails) build artifacts
+/gui/build/bin/
+/gui/frontend/node_modules/
+/gui/frontend/dist/*
+!/gui/frontend/dist/index.html
+/gui/frontend/wailsjs/
+/gui/frontend/package.json.md5

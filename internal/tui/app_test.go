@@ -1161,16 +1161,6 @@ func TestBodyVimModalFlow(t *testing.T) {
 	}
 }
 
-func TestAppendQuery(t *testing.T) {
-	got := appendQuery("https://x.test/api", []model.KV{
-		{Key: "a", Value: "1", Enabled: true},
-		{Key: "skip", Value: "9", Enabled: false},
-	})
-	if got != "https://x.test/api?a=1" {
-		t.Errorf("appendQuery = %q", got)
-	}
-}
-
 func TestSendCommandGoesInFlight(t *testing.T) {
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.url.SetText("https://example.test")
