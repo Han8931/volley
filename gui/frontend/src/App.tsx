@@ -42,7 +42,15 @@ export default function App() {
   const [curlText, setCurlText] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [sidebarW, setSidebarW] = useState(() => savedNum("volley.sidebarW", 230));
-  const [editorFrac, setEditorFrac] = useState(() => Math.min(0.7, savedNum("volley.editorFrac", 0.38)));
+  const [treeFolded, setTreeFolded] = useState(() => localStorage.getItem("volley.treeFolded") === "on");
+  const [editorFrac, setEditorFrac] = useState(() =>
+    Math.min(0.75, Math.max(0.25, savedNum("volley.reqFrac", 0.48))),
+  );
+
+  const foldTree = (folded: boolean) => {
+    setTreeFolded(folded);
+    localStorage.setItem("volley.treeFolded", folded ? "on" : "off");
+  };
 
   const dirty = useMemo(() => JSON.stringify(req) !== baseline, [req, baseline]);
 
@@ -249,15 +257,17 @@ export default function App() {
     window.addEventListener("pointerup", up);
   };
 
-  const columnRef = useRef<HTMLElement | null>(null);
+  // Request/response are side-by-side; the split fraction is the request
+  // column's share of the work row's width.
+  const workRowRef = useRef<HTMLDivElement | null>(null);
   const dragSplit = (e: React.PointerEvent) => {
     e.preventDefault();
-    const col = columnRef.current?.getBoundingClientRect();
-    if (!col) return;
+    const row = workRowRef.current?.getBoundingClientRect();
+    if (!row) return;
     const move = (ev: PointerEvent) => {
-      const frac = Math.min(0.75, Math.max(0.12, (ev.clientY - col.top - 110) / Math.max(1, col.height - 110)));
+      const frac = Math.min(0.75, Math.max(0.25, (ev.clientX - row.left) / Math.max(1, row.width)));
       setEditorFrac(frac);
-      localStorage.setItem("volley.editorFrac", String(frac));
+      localStorage.setItem("volley.reqFrac", String(frac));
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -269,7 +279,8 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar" style={{ width: sidebarW, minWidth: sidebarW }}>
+      {!treeFolded && (
+        <aside className="sidebar" style={{ width: sidebarW, minWidth: sidebarW }}>
         <div className="brand">VOLLEY</div>
         <div className="tree-toolbar" role="toolbar" aria-label="collection actions">
           <button onClick={newRequest}>+ request</button>
@@ -338,17 +349,42 @@ export default function App() {
             {"{{vars}}"}
           </button>
         </div>
-      </aside>
+        </aside>
+      )}
 
-      <div
-        className="divider v"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="resize sidebar"
-        onPointerDown={dragSidebar}
-      />
+      <button
+        className="pane-rail"
+        onClick={() => foldTree(!treeFolded)}
+        title={treeFolded ? "show collections" : "hide collections"}
+        aria-label={treeFolded ? "show collections" : "hide collections"}
+        aria-expanded={!treeFolded}
+      >
+        <span aria-hidden="true">{treeFolded ? "›" : "‹"}</span>
+      </button>
 
-      <main className="main" ref={columnRef}>
+      {!treeFolded && (
+        <div
+          className="divider v"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="resize sidebar"
+          aria-valuemin={160}
+          aria-valuemax={500}
+          aria-valuenow={Math.round(sidebarW)}
+          tabIndex={0}
+          onPointerDown={dragSidebar}
+          onKeyDown={(e) => {
+            const delta = e.key === "ArrowLeft" ? -16 : e.key === "ArrowRight" ? 16 : 0;
+            if (delta === 0) return;
+            e.preventDefault();
+            const w = Math.min(Math.max(sidebarW + delta, 160), Math.min(500, window.innerWidth * 0.5));
+            setSidebarW(w);
+            localStorage.setItem("volley.sidebarW", String(w));
+          }}
+        />
+      )}
+
+      <main className="main">
         <div className="topbar">
           <select
             className={"method-select m-" + req.method}
@@ -384,67 +420,87 @@ export default function App() {
           </button>
         </div>
 
-        <div className="tabs" role="tablist">
-          {(["headers", "query", "body", "auth"] as ReqTab[]).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={t === tab}
-              className={t === tab ? "tab active" : "tab"}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-          <button className="curlbtn" onClick={() => setPanel("curl-import")}>
-            import curl
-          </button>
-          <button className="curlbtn" onClick={exportCurl}>
-            copy as curl
-          </button>
-          <div className="doc">
-            {current || "[No Name]"}
-            {dirty && <span className="dirty"> ●</span>}
+        <div className="workrow" ref={workRowRef}>
+          <div className="req-col" style={{ flex: `0 0 ${editorFrac * 100}%` }}>
+            <div className="tabs" role="tablist">
+              {(["headers", "query", "body", "auth"] as ReqTab[]).map((t) => (
+                <button
+                  key={t}
+                  role="tab"
+                  aria-selected={t === tab}
+                  className={t === tab ? "tab active" : "tab"}
+                  onClick={() => setTab(t)}
+                >
+                  {t}
+                </button>
+              ))}
+              <button className="curlbtn" onClick={() => setPanel("curl-import")}>
+                import curl
+              </button>
+              <button className="curlbtn" onClick={exportCurl}>
+                copy as curl
+              </button>
+              <div className="doc">
+                {current || "[No Name]"}
+                {dirty && <span className="dirty"> ●</span>}
+              </div>
+            </div>
+
+            <section className="editor">
+              {tab === "headers" && (
+                <RowsEditor
+                  rows={req.headers.map((h) => ({ key: h.name, value: h.value, enabled: h.enabled }))}
+                  placeholderKey="Header-Name"
+                  onChange={(rows) =>
+                    setReq({
+                      ...req,
+                      headers: rows.map((r): Header => ({ name: r.key, value: r.value, enabled: r.enabled })),
+                    })
+                  }
+                />
+              )}
+              {tab === "query" && (
+                <RowsEditor
+                  rows={req.query}
+                  placeholderKey="param"
+                  onChange={(rows) => setReq({ ...req, query: rows })}
+                />
+              )}
+              {tab === "body" && (
+                <textarea
+                  className="body"
+                  aria-label="request body"
+                  placeholder='{"raw": "request body"}'
+                  value={req.body}
+                  onChange={(e) => setReq({ ...req, body: e.target.value })}
+                />
+              )}
+              {tab === "auth" && <AuthEditor req={req} onChange={setReq} />}
+            </section>
           </div>
+
+          <div
+            className="divider v split"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="resize request/response split"
+            aria-valuemin={25}
+            aria-valuemax={75}
+            aria-valuenow={Math.round(editorFrac * 100)}
+            tabIndex={0}
+            onPointerDown={dragSplit}
+            onKeyDown={(e) => {
+              const delta = e.key === "ArrowLeft" ? -0.04 : e.key === "ArrowRight" ? 0.04 : 0;
+              if (delta === 0) return;
+              e.preventDefault();
+              const frac = Math.min(0.75, Math.max(0.25, editorFrac + delta));
+              setEditorFrac(frac);
+              localStorage.setItem("volley.reqFrac", String(frac));
+            }}
+          />
+
+          <ResponsePane resp={resp} sending={sending} onNote={setNote} />
         </div>
-
-        <section className="editor" style={{ flex: `0 1 ${editorFrac * 100}%` }}>
-          {tab === "headers" && (
-            <RowsEditor
-              rows={req.headers.map((h) => ({ key: h.name, value: h.value, enabled: h.enabled }))}
-              placeholderKey="Header-Name"
-              onChange={(rows) =>
-                setReq({
-                  ...req,
-                  headers: rows.map((r): Header => ({ name: r.key, value: r.value, enabled: r.enabled })),
-                })
-              }
-            />
-          )}
-          {tab === "query" && (
-            <RowsEditor rows={req.query} placeholderKey="param" onChange={(rows) => setReq({ ...req, query: rows })} />
-          )}
-          {tab === "body" && (
-            <textarea
-              className="body"
-              aria-label="request body"
-              placeholder='{"raw": "request body"}'
-              value={req.body}
-              onChange={(e) => setReq({ ...req, body: e.target.value })}
-            />
-          )}
-          {tab === "auth" && <AuthEditor req={req} onChange={setReq} />}
-        </section>
-
-        <div
-          className="divider h"
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="resize request editor"
-          onPointerDown={dragSplit}
-        />
-
-        <ResponsePane resp={resp} sending={sending} onNote={setNote} />
         {note && (
           <div className="note" role="status">
             {note}

@@ -26,6 +26,7 @@ export default function VarsPanel({
   onNote: (s: string) => void;
 }) {
   const [session, setSession] = useState<Record<string, string>>({});
+  const [revealed, setRevealed] = useState<Set<string>>(new Set()); // session rows shown in clear
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // env being edited
@@ -124,11 +125,27 @@ export default function VarsPanel({
             <div className="row" key={k}>
               <span className="k mono">{k}</span>
               <input
-                className="v"
+                className="v mono"
+                type={revealed.has(k) ? "text" : "password"}
                 aria-label={`value of ${k}`}
                 defaultValue={v}
                 onBlur={(e) => e.target.value !== v && setVar(k, e.target.value)}
               />
+              <button
+                className="mini"
+                aria-label={revealed.has(k) ? `hide value of ${k}` : `reveal value of ${k}`}
+                title={revealed.has(k) ? "hide" : "reveal"}
+                onClick={() =>
+                  setRevealed((s) => {
+                    const next = new Set(s);
+                    if (next.has(k)) next.delete(k);
+                    else next.add(k);
+                    return next;
+                  })
+                }
+              >
+                {revealed.has(k) ? "◡" : "◉"}
+              </button>
               <button className="del" aria-label={`remove ${k}`} onClick={() => setVar(k, "")}>
                 ×
               </button>

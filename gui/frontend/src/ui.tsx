@@ -8,6 +8,10 @@ import { formatDuration, type ProfilePoint } from "./api";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+// modalStack tracks open modals so only the TOPMOST one handles Escape and
+// the Tab trap — a confirmation over a panel must not close both.
+const modalStack: symbol[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -23,17 +27,26 @@ export function Modal({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // The mount effect must run exactly once — callers recreate onClose every
+  // render, and re-running it would steal focus back mid-typing (and worse,
+  // on every 400ms load-test poll). The ref always holds the latest closure.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
+    const me = Symbol("modal");
+    modalStack.push(me);
     const previous = document.activeElement as HTMLElement | null;
-    // Initial focus: the first focusable control, else the dialog itself.
-    const first = box.current?.querySelector<HTMLElement>(FOCUSABLE);
-    (first ?? box.current)?.focus();
+    // Initial focus: the first focusable control after the header's × close
+    // button, else the dialog itself.
+    const focusables = box.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+    ((focusables && (focusables[1] ?? focusables[0])) ?? box.current)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1] !== me) return; // not topmost
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !box.current) return;
@@ -56,9 +69,11 @@ export function Modal({
     window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("keydown", onKey, true);
+      const i = modalStack.indexOf(me);
+      if (i >= 0) modalStack.splice(i, 1);
       previous?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -122,6 +137,7 @@ export function ShapeChart({
   height = 170,
   progress,
   showLegend,
+  domainMs,
   children,
 }: {
   points: ProfilePoint[];
@@ -132,13 +148,15 @@ export function ShapeChart({
   height?: number;
   progress?: number; // 0..1 elapsed marker
   showLegend?: boolean;
+  domainMs?: number; // x-axis extent; > durationMs leaves editing headroom
   children?: (x: (ms: number) => number, y: (rps: number) => number, maxY: number) => ReactNode;
 }) {
   const [hover, setHover] = useState<number | null>(null); // hovered second
   const w = width - PAD_L - PAD_R;
   const h = height - PAD_T - PAD_B;
+  const domain = Math.max(domainMs ?? durationMs, 1);
   const maxY = niceMax(Math.max(peakRps, ...(bars ?? [0])));
-  const x = (ms: number) => PAD_L + (durationMs > 0 ? (ms / durationMs) * w : 0);
+  const x = (ms: number) => PAD_L + (ms / domain) * w;
   const y = (rps: number) => PAD_T + h - (rps / maxY) * h;
 
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.atMs).toFixed(1)},${y(p.rps).toFixed(1)}`).join(" ");
@@ -173,7 +191,7 @@ export function ShapeChart({
             </text>
           </g>
         ))}
-        {xTicks(durationMs).map((t) => (
+        {xTicks(domain).map((t) => (
           <text key={t} className="tick" x={x(t)} y={height - 5} textAnchor="middle">
             {formatDuration(t) || "0"}
           </text>

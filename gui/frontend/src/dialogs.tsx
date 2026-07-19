@@ -7,6 +7,7 @@ import { Modal } from "./ui";
 
 interface PromptReq {
   kind: "prompt";
+  id: number;
   title: string;
   label?: string;
   initial?: string;
@@ -16,6 +17,7 @@ interface PromptReq {
 
 interface ConfirmReq {
   kind: "confirm";
+  id: number;
   title: string;
   body?: string;
   danger?: boolean;
@@ -24,7 +26,7 @@ interface ConfirmReq {
 
 type Req = PromptReq | ConfirmReq;
 
-let enqueue: ((r: Req) => void) | null = null;
+let enqueue: ((r: Omit<Req, "id">) => void) | null = null;
 
 export function appPrompt(
   title: string,
@@ -46,7 +48,11 @@ export function appConfirm(title: string, opts: { body?: string; danger?: boolea
 export function DialogHost() {
   const [queue, setQueue] = useState<Req[]>([]);
   useEffect(() => {
-    enqueue = (r) => setQueue((q) => [...q, r]);
+    let nextId = 1;
+    // A stable per-request id keys the rendered dialog — keying by queue
+    // length would remount (and wipe) the open prompt when another request
+    // queues up behind it.
+    enqueue = (r) => setQueue((q) => [...q, { ...r, id: nextId++ } as Req]);
     return () => {
       enqueue = null;
     };
@@ -57,9 +63,9 @@ export function DialogHost() {
   const done = () => setQueue((q) => q.slice(1));
 
   if (req.kind === "confirm") {
-    return <ConfirmView key={queue.length} req={req} done={done} />;
+    return <ConfirmView key={req.id} req={req} done={done} />;
   }
-  return <PromptView key={queue.length} req={req} done={done} />;
+  return <PromptView key={req.id} req={req} done={done} />;
 }
 
 function ConfirmView({ req, done }: { req: ConfirmReq; done: () => void }) {

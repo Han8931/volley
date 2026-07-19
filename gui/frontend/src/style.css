@@ -49,28 +49,70 @@ textarea {
   flex-direction: column;
 }
 
-/* draggable pane dividers */
+/* The fold handle: a full-height strip forming the tree pane's edge — click
+   anywhere along it to fold/unfold (same element in both states). */
+.pane-rail {
+  flex: 0 0 auto;
+  width: 1.2rem;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 0;
+}
+
+.pane-rail:hover,
+.pane-rail:focus-visible {
+  color: var(--accent);
+  background: var(--line);
+  outline: none;
+}
+
+/* Draggable pane dividers: an 11px hit target drawing a 3px bar
+   (background-clip keeps the padding transparent). Focusable — arrow keys
+   resize (←/→ sidebar, ↑/↓ editor split). */
 .divider {
   flex: 0 0 auto;
   background: var(--line);
-  transition: background 0.15s;
+  background-clip: content-box;
+  transition: background-color 0.15s;
 }
 
 .divider:hover,
 .divider:active {
-  background: var(--accent);
+  background-color: var(--accent);
+}
+
+.divider:focus-visible {
+  outline: none;
+  background-color: var(--accent);
 }
 
 .divider.v {
-  width: 3px;
+  width: 11px;
+  padding: 0 4px;
   cursor: col-resize;
 }
 
-.divider.h {
-  height: 3px;
-  margin: 6px 14px 0;
+/* the request/response split divider sits inside the padded work row */
+.divider.v.split {
   border-radius: 2px;
-  cursor: row-resize;
+}
+
+/* --- work row: request column | divider | response --- */
+
+.workrow {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0 14px 14px;
+}
+
+.req-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .brand {
@@ -227,8 +269,9 @@ textarea {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
-  padding: 8px 14px 0;
+  padding: 8px 0 0;
   align-items: baseline;
 }
 
@@ -252,11 +295,13 @@ textarea {
 
 .editor {
   background: var(--panel);
-  margin: 0 14px;
   border-radius: 0 8px 8px 8px;
   padding: 12px;
-  min-height: 90px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .rows {
@@ -298,15 +343,18 @@ textarea {
   padding: 4px 2px;
 }
 
+/* The body editor fills whatever height the pane has — no fixed cap; grow
+   the pane itself with the split divider or by folding the tree. */
 textarea.body {
   width: 100%;
-  min-height: 150px;
+  flex: 1;
+  min-height: 0;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  resize: vertical;
+  resize: none;
 }
 
 .auth {
@@ -335,12 +383,13 @@ textarea.body {
 
 .response {
   flex: 1;
-  margin: 12px 14px 14px;
+  margin-top: 34px; /* aligns the panel top with the editor (below the tab row) */
   background: var(--panel);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .response.empty,

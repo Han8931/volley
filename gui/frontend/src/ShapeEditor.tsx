@@ -5,7 +5,7 @@
 // editor can't produce a shape the engine would reject. Raw JSON stays
 // available behind a toggle for hand-tuning.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatDuration, parseDuration, type Profile, type ProfilePoint } from "./api";
 import { niceMax, ShapeChart } from "./ui";
 
@@ -39,6 +39,10 @@ export default function ShapeEditor({
 
   const durationMs = points[points.length - 1]?.atMs ?? 0;
   const peakRps = Math.max(...points.map((p) => p.rps), 1);
+  // The plot's x-domain extends past the last point so the tail can be
+  // dragged later — without headroom the last point maps to the right edge
+  // and can never move right.
+  const domainMs = durationMs + Math.max(5000, Math.round(durationMs * 0.25));
 
   // clampPoint keeps a moved point valid: times non-decreasing between its
   // neighbors, the first point pinned to 0s, rates non-negative.
@@ -67,7 +71,7 @@ export default function ShapeEditor({
     const padT = 8 / CHART_H;
     const padB = 18 / CHART_H;
     const maxY = niceMax(Math.max(peakRps, 1));
-    const atMs = ((fx - padL) / (1 - padL - padR)) * durationMs;
+    const atMs = ((fx - padL) / (1 - padL - padR)) * domainMs;
     const rps = (1 - (fy - padT) / (1 - padT - padB)) * maxY;
     setPoint(dragging.current, atMs, rps);
   };
@@ -165,13 +169,15 @@ export default function ShapeEditor({
   };
 
   const p = points[sel];
-  const planned = plannedOf(points);
+  // The engine caps planned arrivals at maxRequests (see
+  // Profile.PlannedRequests) — the estimate must agree with it.
+  const planned = maxRequests > 0 ? Math.min(plannedOf(points), maxRequests) : plannedOf(points);
 
   return (
     <div className="shape-editor">
       <div className="p-meta">
         <b>{name}</b> · peak {Math.max(...points.map((x) => x.rps))} rps · {formatDuration(durationMs) || "0s"} ·{" "}
-        ~{planned} req total
+        up to {planned} req
       </div>
 
       <div
@@ -180,7 +186,7 @@ export default function ShapeEditor({
         onPointerUp={() => (dragging.current = null)}
         onPointerLeave={() => (dragging.current = null)}
       >
-        <ShapeChart points={points} durationMs={durationMs} peakRps={peakRps} showLegend={false}>
+        <ShapeChart points={points} durationMs={durationMs} peakRps={peakRps} showLegend={false} domainMs={domainMs}>
           {(x, y) => (
             <>
               {points.map((pt, i) => (
@@ -210,15 +216,13 @@ export default function ShapeEditor({
           <legend>point {sel + 1} of {points.length}</legend>
           <label>
             time
-            <input
-              className="mono"
-              value={formatDuration(p.atMs) || "0s"}
+            <TimeDraftInput
+              key={sel} // a fresh draft per selected point
+              ms={p.atMs}
               disabled={sel === 0}
               title={sel === 0 ? "the first point is pinned to 0s" : "e.g. 10s, 500ms, 2m"}
-              onChange={(e) => {
-                const ms = parseDuration(e.target.value);
-                if (ms !== null) setPoint(sel, ms, p.rps);
-              }}
+              onCommit={(ms) => setPoint(sel, ms, p.rps)}
+              onBad={() => onNote("bad duration — try 500ms, 10s, 2m")}
             />
           </label>
           <label>
@@ -292,6 +296,54 @@ export default function ShapeEditor({
         <button onClick={onCancel}>cancel</button>
       </div>
     </div>
+  );
+}
+
+// TimeDraftInput holds the typed text as a draft and commits it on blur or
+// Enter — reformatting on every keystroke would turn "5" into "5s" before
+// "500ms" could be finished.
+function TimeDraftInput({
+  ms,
+  disabled,
+  title,
+  onCommit,
+  onBad,
+}: {
+  ms: number;
+  disabled: boolean;
+  title: string;
+  onCommit: (ms: number) => void;
+  onBad: () => void;
+}) {
+  const [draft, setDraft] = useState(formatDuration(ms) || "0s");
+  const commit = () => {
+    const parsed = parseDuration(draft);
+    if (parsed === null) {
+      onBad();
+      setDraft(formatDuration(ms) || "0s");
+      return;
+    }
+    onCommit(parsed);
+  };
+  // Reflect outside moves (dragging the point) while not being edited.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setDraft(formatDuration(ms) || "0s");
+  }, [ms]);
+  return (
+    <input
+      className="mono"
+      value={draft}
+      disabled={disabled}
+      title={title}
+      onFocus={() => (focused.current = true)}
+      onBlur={() => {
+        focused.current = false;
+        commit();
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => e.key === "Enter" && commit()}
+    />
   );
 }
 
