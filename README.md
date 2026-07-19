@@ -1,12 +1,15 @@
 # Volley
 
-**Volley is a Vim-first terminal API client**: collections, tabs, auth helpers,
-variables, curl import/export, pretty responses, and keyboard-native request
-editing — all in one fast TUI.
+**Volley is a Vim-first API client**: collections, tabs, auth helpers,
+variables and environments, curl import/export, pretty responses, and
+keyboard-native request editing — in one fast TUI, with a native **desktop
+app** sharing the same engine and stores.
 
 It is built for people who live in the terminal and want a Postman/Bruno-style
 workflow without leaving Vim muscle memory — plus built-in load testing driven
-by editable load-shape profiles.
+by editable load-shape profiles. The desktop app (Wails) is a thin front-end
+over the same Go core: requests, environments, and load profiles saved in one
+are immediately visible in the other.
 
 ## Why Volley?
 
@@ -47,6 +50,30 @@ go build -o volley .
 
 Volley starts in **NORMAL mode** focused on the collections tree, so you can pick
 a saved request immediately.
+
+## Desktop app
+
+The `gui/` directory holds the native desktop app — the same request engine,
+collections, variables/environments, and load-test machinery in a window
+(Wails v2: WebKit on macOS, WebKitGTK on Linux; React + TypeScript front-end).
+
+```sh
+# once: install the Wails CLI
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+cd gui
+wails dev     # live-reload development
+wails build   # → gui/build/bin/Volley.app (macOS) or a native binary
+```
+
+Feature parity with the TUI: request editing (headers/query/body/auth,
+per-request timeouts), collections with groups and rename/copy/delete,
+`{{vars}}` with session overrides and environments, curl import/export,
+raw/pretty responses with copy, unsaved-changes guarding, and the full
+load-testing flow — profile picker with live shape preview, a **graphical
+shape editor** (drag points on the plot), confirm-before-fire showing the
+resolved target, live run charts, and the same k6-style analysis auto-saved
+to `loadresults/`.
 
 ## Quick workflow
 
@@ -148,7 +175,11 @@ p                   toggle raw/pretty JSON response
 | `:rengroup old new` | rename a group |
 | `:ls` | focus/refresh collections tree |
 | `:method POST` | set HTTP method |
-| `:set tok=abc123` | define a `{{tok}}` variable |
+| `:set tok=abc123` | define a `{{tok}}` variable (bare `:set` lists known names) |
+| `:env` | list environments (active one bracketed) |
+| `:env staging` / `:env off` | activate / deactivate an environment |
+| `:envnew name` · `:envedit [name]` | create · edit an environment's JSON in `$VISUAL` / `$EDITOR` |
+| `:envrm name` | delete an environment |
 | `:send` | send current request |
 | `:timeout 10s` | set request timeout |
 | `:tabnew name` / `:tabe name` | open saved request as a tab |
@@ -264,9 +295,15 @@ Groups are folders. Slash-separated names like `APISet1/auth/login` create neste
 folders. Empty groups persist with a `.keep` marker.
 
 `{{name}}` placeholders in URLs, headers, params, auth fields, and bodies are
-expanded at send time. Volley resolves `:set` variables first, then process
-environment variables. Unresolved placeholders are shown in the status bar before
-sending.
+expanded at send time, resolving through three layers: session `:set`
+overrides first, then the **active environment**, then process environment
+variables. Unresolved placeholders are shown in the status bar before sending.
+
+Environments are named variable sets stored as flat JSON files under
+`environments/` beside `collections/` (file mode `0600` — they tend to hold
+tokens). Activate one with `:env staging` (the status bar shows the active
+environment) or from the desktop app's environment selector; both front-ends
+read the same files.
 
 ## Roadmap
 
@@ -282,9 +319,11 @@ sending.
 - [x] Load testing: shaped RPS profiles, worker cap, p50/p95/p99, live charts
 - [x] In-TUI load-shape editor (edit points without leaving Volley)
 - [x] Load-test results: k6-style end-of-run analysis, auto-saved JSON history
+- [x] Environments (named variable sets on disk, layered `{{var}}` resolution)
+- [x] Native desktop app (Wails) over the shared core, at feature parity
 - [ ] Load-test comparison (`:loadcompare` — did my change regress p99?)
 - [ ] Tab session persistence across restarts
-- [ ] Environments and persisted variable scopes
+- [ ] Persist the active environment across restarts
 
 > Note: collections are stored as native JSON. Posting/Postman/Bruno collection
 > import/export is not implemented yet; curl import/export is supported.

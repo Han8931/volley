@@ -44,12 +44,33 @@ textarea {
 /* --- sidebar --- */
 
 .sidebar {
-  width: 230px;
-  min-width: 230px;
   background: var(--panel);
-  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
+}
+
+/* draggable pane dividers */
+.divider {
+  flex: 0 0 auto;
+  background: var(--line);
+  transition: background 0.15s;
+}
+
+.divider:hover,
+.divider:active {
+  background: var(--accent);
+}
+
+.divider.v {
+  width: 3px;
+  cursor: col-resize;
+}
+
+.divider.h {
+  height: 3px;
+  margin: 6px 14px 0;
+  border-radius: 2px;
+  cursor: row-resize;
 }
 
 .brand {
@@ -145,9 +166,14 @@ textarea {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.topbar .url {
+  min-width: 220px;
 }
 
 .method-select {
@@ -229,8 +255,7 @@ textarea {
   margin: 0 14px;
   border-radius: 0 8px 8px 8px;
   padding: 12px;
-  min-height: 150px;
-  max-height: 34vh;
+  min-height: 90px;
   overflow-y: auto;
 }
 
@@ -391,6 +416,7 @@ textarea.body {
 
 .tree-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 0 10px 6px;
 }
@@ -398,8 +424,10 @@ textarea.body {
 .tree-toolbar button {
   color: var(--dim);
   cursor: pointer;
-  padding: 2px 8px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
   border-radius: 6px;
+  font-size: 0.85em;
 }
 
 .tree-toolbar button:hover {
@@ -419,26 +447,47 @@ textarea.body {
 }
 
 .tree-line .tree-group {
-  padding: 6px 8px 2px;
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 5px 8px;
+  color: var(--fg);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tree-line .tree-group:hover {
+  background: var(--line);
+}
+
+.tree-group .twist {
   color: var(--dim);
-  font-size: 0.85em;
+  font-size: 0.8em;
 }
 
 .tree-actions {
-  display: none;
+  display: flex;
   gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
 }
 
-.tree-line:hover .tree-actions {
-  display: flex;
+.tree-line:hover .tree-actions,
+.tree-line:focus-within .tree-actions {
+  opacity: 1;
 }
 
 .tree-actions button {
   color: var(--dim);
   cursor: pointer;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.8em;
+  font-size: 0.85em;
 }
 
 .tree-actions button:hover {
@@ -739,6 +788,38 @@ button.danger {
   font-size: 0.9em;
 }
 
+.chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  color: var(--dim);
+  font-size: 0.8em;
+}
+
+.chart-legend .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.chart-legend .bar-swatch {
+  background: var(--accent);
+}
+
+.chart-legend .line-swatch {
+  height: 2px;
+  vertical-align: 3px;
+  background: var(--dim);
+}
+
 .chart {
   width: 100%;
   height: auto;
@@ -746,16 +827,32 @@ button.danger {
   border-radius: 8px;
 }
 
+.chart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart .tick {
+  fill: var(--dim);
+  font-size: 9px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
 .chart .target-line {
   fill: none;
   stroke: var(--dim);
-  stroke-width: 1.5;
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
 .chart .bar {
   fill: var(--accent);
-  opacity: 0.75;
+  opacity: 0.8;
+}
+
+.chart .bar.hot {
+  opacity: 1;
 }
 
 .chart .progress-mark {
@@ -764,11 +861,124 @@ button.danger {
   vector-effect: non-scaling-stroke;
 }
 
+/* latency amber #D97706: snapped into the validated lightness band for the
+   dark chart surface (dataviz six-checks) — not the UI warn amber. */
 .chart .latency-line {
   fill: none;
-  stroke: var(--warn);
-  stroke-width: 1.5;
+  stroke: #d97706;
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+/* --- shape editor --- */
+
+.shape-plot {
+  touch-action: none;
+}
+
+.shape-point {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 2;
+  cursor: grab;
+}
+
+.shape-point.selected {
+  fill: var(--warn);
+}
+
+.shape-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shape-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.shape-controls fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px 12px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.shape-controls legend {
+  color: var(--dim);
+  font-size: 0.8em;
+  padding: 0 6px;
+}
+
+.shape-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--dim);
+  font-size: 0.8em;
+}
+
+.shape-controls label.grow {
+  flex: 1;
+}
+
+.shape-controls input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  width: 90px;
+  color: var(--fg);
+  font-size: 1rem;
+}
+
+.shape-controls label.grow input {
+  width: 100%;
+}
+
+.shape-controls input:disabled {
+  opacity: 0.5;
+}
+
+/* --- dialogs --- */
+
+.modal.narrow {
+  width: min(400px, 92vw);
+}
+
+.dialog-body {
+  color: var(--fg);
+  margin: 2px 0 10px;
+  display: block;
+}
+
+.dialog-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.dialog-input:focus {
+  outline: 1px solid var(--accent);
+}
+
+button.danger-solid {
+  background: var(--err);
+  color: #000;
+  font-weight: 700;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
 }
 
 .load-confirm .target {

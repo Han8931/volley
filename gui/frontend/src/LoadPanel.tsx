@@ -1,13 +1,16 @@
 // LoadPanel — shaped load testing, mirroring the TUI flow: pick a profile
 // (live shape preview), confirm exactly what will be fired at which target,
 // watch the run (progress, counters, charts), then read the k6-style
-// analysis. Profiles are editable as JSON (the :loadeditor equivalent).
+// analysis. Profiles are edited in the graphical ShapeEditor (raw JSON is a
+// toggle inside it).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatDuration, type LoadRun, type Profile, type RequestDef } from "./api";
+import { appConfirm, appPrompt } from "./dialogs";
+import ShapeEditor from "./ShapeEditor";
 import { LatencyChart, Modal, ShapeChart } from "./ui";
 
-type Stage = "picker" | "confirm" | "run";
+type Stage = "picker" | "edit" | "confirm" | "run";
 
 export default function LoadPanel({
   req,
@@ -24,8 +27,8 @@ export default function LoadPanel({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [sel, setSel] = useState(0);
   const [run, setRun] = useState<LoadRun | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editBase, setEditBase] = useState<Profile | undefined>(undefined);
   const timer = useRef<number | undefined>(undefined);
 
   const refresh = useCallback(() => {
@@ -87,62 +90,12 @@ export default function LoadPanel({
   };
 
   const close = async () => {
-    if (run && !run.done) {
-      if (!window.confirm("A load test is running — stop it?")) return;
+    if (run && !run.done && stage === "run") {
+      if (!(await appConfirm("Stop the load test?", { body: "A run is still in progress." }))) return;
       await api.StopLoadTest();
     }
     if (run?.done) await api.DismissLoadTest();
     onClose();
-  };
-
-  const openEditor = (name: string, p?: Profile) => {
-    const src = p ?? profiles.find((x) => x.name === name);
-    const body = {
-      name,
-      description: src?.description ?? "",
-      points: (src?.points ?? [{ atMs: 0, rps: 20 }, { atMs: 30000, rps: 20 }]).map((pt) => ({
-        at: formatDuration(pt.atMs) || "0s",
-        rps: pt.rps,
-      })),
-      ...(src?.maxRequests ? { maxRequests: src.maxRequests } : {}),
-      ...(src?.maxWorkers ? { maxWorkers: src.maxWorkers } : {}),
-    };
-    setEditing(name);
-    setEditText(JSON.stringify(body, null, 2));
-  };
-
-  const saveProfile = async () => {
-    if (editing === null) return;
-    try {
-      const parsed = JSON.parse(editText) as {
-        name?: string;
-        description?: string;
-        points?: { at?: string; rps?: number }[];
-        maxRequests?: number;
-        maxWorkers?: number;
-      };
-      const points = (parsed.points ?? []).map((pt) => {
-        const m = /^([0-9]*\.?[0-9]+)(ms|s|m)$/.exec((pt.at ?? "0s").trim());
-        if (!m) throw new Error(`bad "at": ${pt.at}`);
-        const f = m[2] === "ms" ? 1 : m[2] === "s" ? 1000 : 60000;
-        return { atMs: Math.round(parseFloat(m[1]) * f), rps: pt.rps ?? 0 };
-      });
-      await api.SaveProfile(editing, {
-        name: editing,
-        description: parsed.description,
-        points,
-        maxRequests: parsed.maxRequests,
-        maxWorkers: parsed.maxWorkers,
-        peakRps: 0,
-        durationMs: 0,
-        planned: 0,
-      });
-      onNote(`saved load profile ${editing}`);
-      setEditing(null);
-      refresh();
-    } catch (e) {
-      onNote(`profile save failed: ${String(e)}`);
-    }
   };
 
   const p = profiles[sel];
@@ -151,9 +104,15 @@ export default function LoadPanel({
     <Modal title="LOAD TEST" onClose={close} wide>
       {stage === "picker" && (
         <div className="load-picker">
-          <div className="profile-list">
+          <div className="profile-list" role="listbox" aria-label="load profiles">
             {profiles.map((pr, i) => (
-              <button key={pr.name} className={i === sel ? "profile active" : "profile"} onClick={() => setSel(i)}>
+              <button
+                key={pr.name}
+                role="option"
+                aria-selected={i === sel}
+                className={i === sel ? "profile active" : "profile"}
+                onClick={() => setSel(i)}
+              >
                 <span className="p-name">{pr.name}</span>
                 <span className="p-desc">{pr.description}</span>
               </button>
@@ -161,22 +120,39 @@ export default function LoadPanel({
             <div className="row-buttons">
               <button
                 className="mini"
-                onClick={() => {
-                  const name = window.prompt("New profile name:", "");
-                  if (name) openEditor(name, p); // start from the selection, like :loadnew <name> <template>
+                onClick={async () => {
+                  const name = await appPrompt("New load profile", {
+                    label: "Profile name — starts from the selected shape",
+                    placeholder: "my-spike",
+                  });
+                  if (!name) return;
+                  if (profiles.some((x) => x.name === name)) {
+                    onNote(`${name} already exists — select it and press edit`);
+                    return;
+                  }
+                  setEditName(name);
+                  setEditBase(p);
+                  setStage("edit");
                 }}
               >
                 + new
               </button>
               {p && (
                 <>
-                  <button className="mini" onClick={() => openEditor(p.name)}>
-                    edit JSON
+                  <button
+                    className="mini"
+                    onClick={() => {
+                      setEditName(p.name);
+                      setEditBase(p);
+                      setStage("edit");
+                    }}
+                  >
+                    edit shape
                   </button>
                   <button
                     className="mini danger"
                     onClick={async () => {
-                      if (window.confirm(`Delete profile ${p.name}?`)) {
+                      if (await appConfirm(`Delete profile ${p.name}?`, { danger: true })) {
                         await api.DeleteProfile(p.name);
                         refresh();
                       }
@@ -191,7 +167,7 @@ export default function LoadPanel({
           <div className="profile-preview">
             {p && (
               <>
-                <ShapeChart points={p.points} durationMs={p.durationMs} peakRps={p.peakRps} />
+                <ShapeChart points={p.points} durationMs={p.durationMs} peakRps={p.peakRps} showLegend={false} />
                 <div className="p-meta">
                   peak {p.peakRps} rps · {formatDuration(p.durationMs)} · {p.planned} req total
                   {p.maxWorkers ? ` · ≤${p.maxWorkers} workers` : ""}
@@ -203,6 +179,19 @@ export default function LoadPanel({
             )}
           </div>
         </div>
+      )}
+
+      {stage === "edit" && (
+        <ShapeEditor
+          name={editName}
+          initial={editBase}
+          onSaved={() => {
+            refresh();
+            setStage("picker");
+          }}
+          onCancel={() => setStage("picker")}
+          onNote={onNote}
+        />
       )}
 
       {stage === "confirm" && p && (
@@ -224,19 +213,8 @@ export default function LoadPanel({
         </div>
       )}
 
-      {stage === "run" && <RunView run={run} onStop={() => api.StopLoadTest()} onRerun={rerun} onClose={close} onNote={onNote} />}
-
-      {editing !== null && (
-        <div className="env-edit">
-          <h3>{editing}.json</h3>
-          <textarea className="mono" value={editText} onChange={(e) => setEditText(e.target.value)} spellCheck={false} />
-          <div className="row-buttons">
-            <button className="primary" onClick={saveProfile}>
-              save
-            </button>
-            <button onClick={() => setEditing(null)}>cancel</button>
-          </div>
-        </div>
+      {stage === "run" && (
+        <RunView run={run} onStop={() => api.StopLoadTest()} onRerun={rerun} onClose={close} onNote={onNote} />
       )}
     </Modal>
   );
@@ -285,7 +263,13 @@ function RunView({
       </div>
 
       {!run.done && (
-        <div className="progress">
+        <div
+          className="progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(frac * 100)}
+        >
           <div className="progress-fill" style={{ width: `${frac * 100}%` }} />
         </div>
       )}
@@ -320,15 +304,15 @@ function RunView({
       )}
 
       <div className="chart-block">
-        <div className="chart-label">target ─ vs achieved ▮ (per second)</div>
         <ShapeChart
           points={p.points}
           durationMs={p.durationMs}
           peakRps={p.peakRps}
           bars={run.buckets.map((b) => b.completed)}
           progress={run.done ? undefined : frac}
+          showLegend
         />
-        <div className="chart-label">latency (mean/s) · max {run.maxMs.toFixed(0)}ms</div>
+        <div className="chart-label">latency, mean per second · max {run.maxMs.toFixed(0)}ms</div>
         <LatencyChart values={run.buckets.map((b) => b.meanLatencyMs)} durationMs={p.durationMs} />
       </div>
 
