@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -37,6 +40,16 @@ type loadState struct {
 
 	loadConfirm    bool // y/n prompt before firing the run
 	pendingProfile loadtest.Profile
+
+	// The dedicated shape-editing mode (see shapeeditor.go): an interactive
+	// point editor for building custom load shapes without leaving Volley.
+	shapeEdit           bool
+	shapeName           string           // profile name the shape saves to
+	shapeBase           loadtest.Profile // carries description/maxWorkers through
+	shapePoints         []loadtest.Point // working copy being edited
+	shapeBaseline       []loadtest.Point // last saved/loaded points, for dirty checks
+	shapeSel            int              // selected point index
+	shapeConfirmDiscard bool             // esc pressed with unsaved changes
 }
 
 // loadTickMsg drives snapshot polling while a run is active.
@@ -86,7 +99,7 @@ func (m Model) openLoadPicker() (tea.Model, tea.Cmd) {
 	if m.pickerIdx >= len(items) {
 		m.pickerIdx = 0
 	}
-	m.statusMsg = "load profile: j/k choose · ⏎ run · esc cancel"
+	m.statusMsg = "load profile: j/k choose · ⏎ run · e edit · n new · esc cancel"
 	return m, nil
 }
 
@@ -105,11 +118,157 @@ func (m Model) updateLoadPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p := m.pickerItems[m.pickerIdx]
 		m.loadPicker = false
 		return m.confirmLoadTest(p), nil
+	case "e":
+		// Reshape the highlighted profile in the dedicated editing mode.
+		p := m.pickerItems[m.pickerIdx]
+		return m.openShapeEditor(p.Name, p), nil
+	case "n":
+		// Hand off to :loadnew with the command line prefilled.
+		m.loadPicker = false
+		return m.openCommandLineWith(':', "loadnew "), nil
 	case "esc", "q":
 		m.loadPicker = false
 		m.statusMsg = "load test cancelled"
 	}
 	return m, nil
+}
+
+// --- creating and editing profiles -----------------------------------------
+
+// profileEditorFinishedMsg reports the $EDITOR round-trip for a load profile.
+type profileEditorFinishedMsg struct {
+	path string // temp file holding the edited JSON
+	name string // profile name to save under
+	err  error
+}
+
+// newLoadProfile starts :loadnew — a fresh profile named name, based on an
+// existing profile (default: the built-in constant shape), opened in the
+// shape-editing mode. Nothing is written to the store until the shape is
+// saved, so an abandoned session leaves no half-made profile behind.
+func (m Model) newLoadProfile(name, template string) (tea.Model, tea.Cmd) {
+	if err := m.loadStore.EnsureDefaults(); err != nil {
+		m.statusMsg = "load profiles unavailable: " + err.Error()
+		return m, nil
+	}
+	if m.loadRunning() {
+		m.statusMsg = "load test already running — esc to stop it first"
+		return m, nil
+	}
+	if _, err := m.loadStore.Load(name); err == nil {
+		m.statusMsg = name + " already exists — use :loadedit " + name
+		return m, nil
+	}
+	base := loadtest.Constant(20, 30*time.Second)
+	if template != "" {
+		p, err := m.loadStore.Load(template)
+		if err != nil {
+			m.statusMsg = "no load profile named " + template + " to start from"
+			return m, nil
+		}
+		base = p
+	}
+	base.Description = strings.TrimSpace(base.Description)
+	m = m.openShapeEditor(name, base)
+	// A new shape counts as unsaved from the start: it exists nowhere yet.
+	m.shapeBaseline = nil
+	return m, nil
+}
+
+// editLoadProfileByName starts :loadedit on a stored profile.
+func (m Model) editLoadProfileByName(name string) (tea.Model, tea.Cmd) {
+	if err := m.loadStore.EnsureDefaults(); err != nil {
+		m.statusMsg = "load profiles unavailable: " + err.Error()
+		return m, nil
+	}
+	if m.loadRunning() {
+		m.statusMsg = "load test already running — esc to stop it first"
+		return m, nil
+	}
+	p, err := m.loadStore.Load(name)
+	if err != nil {
+		m.statusMsg = "no load profile named " + name
+		return m, nil
+	}
+	return m.openShapeEditor(name, p), nil
+}
+
+// editLoadProfile writes p to a temp file and opens it in $EDITOR; the result
+// is validated and saved under name when the editor exits.
+func (m Model) editLoadProfile(name string, p loadtest.Profile) (tea.Model, tea.Cmd) {
+	editor := resolveEditor()
+	if editor == "" {
+		m.statusMsg = "set $VISUAL or $EDITOR to edit load profiles"
+		return m, nil
+	}
+	p.Name = name
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		m.statusMsg = "edit failed: " + err.Error()
+		return m, nil
+	}
+	f, err := os.CreateTemp("", "volley-profile-*.json")
+	if err != nil {
+		m.statusMsg = "edit failed: " + err.Error()
+		return m, nil
+	}
+	path := f.Name()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		os.Remove(path)
+		m.statusMsg = "edit failed: " + err.Error()
+		return m, nil
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		m.statusMsg = "edit failed: " + err.Error()
+		return m, nil
+	}
+	parts := strings.Fields(editor)
+	cmd := exec.Command(parts[0], append(parts[1:], path)...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return profileEditorFinishedMsg{path: path, name: name, err: err}
+	})
+}
+
+// applyProfileEditorResult validates and stores the edited profile, then
+// reopens the picker on it so the new shape is immediately visible.
+func (m Model) applyProfileEditorResult(msg profileEditorFinishedMsg) (tea.Model, tea.Cmd) {
+	defer os.Remove(msg.path)
+	if msg.err != nil {
+		m.statusMsg = "editor failed: " + msg.err.Error()
+		return m, nil
+	}
+	b, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.statusMsg = "editor failed: " + err.Error()
+		return m, nil
+	}
+	var p loadtest.Profile
+	if err := json.Unmarshal(b, &p); err != nil {
+		m.statusMsg = "profile parse failed: " + err.Error()
+		return m, nil
+	}
+	if err := m.loadStore.Save(msg.name, p); err != nil {
+		m.statusMsg = "profile save failed: " + err.Error()
+		return m, nil
+	}
+	m.statusMsg = "saved load profile " + msg.name
+	if m.loadRunning() {
+		return m, nil // don't yank the pane away from a live run
+	}
+	next, cmd := m.openLoadPicker()
+	nm := next.(Model)
+	if nm.loadPicker {
+		for i, item := range nm.pickerItems {
+			if item.Name == msg.name {
+				nm.pickerIdx = i
+				break
+			}
+		}
+		nm.statusMsg = "saved load profile " + msg.name + " — ⏎ runs it"
+	}
+	return nm, cmd
 }
 
 // confirmLoadTest arms the y/n prompt, spelling out exactly what is about to
@@ -305,12 +464,15 @@ func achievedSeries(snap loadtest.Snapshot, secs int) []float64 {
 	return out
 }
 
-// formatRunDuration trims the "0s" tail Go puts on round minutes ("1m0s").
+// formatRunDuration trims the zero tails Go puts on round durations — "1m0s"
+// reads as "1m", "2h0m0s" as "2h" — without touching plain seconds like "30s".
 func formatRunDuration(d time.Duration) string {
 	s := d.Round(time.Second).String()
-	s = strings.TrimSuffix(s, "0s")
-	if s == "" {
-		s = "0s"
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
 	}
 	return s
 }
@@ -339,7 +501,7 @@ func (m Model) viewLoadPicker() string {
 		dim(fmt.Sprintf("peak %.0f rps · %s · %d req total",
 			p.Peak(), formatRunDuration(p.Duration()), int(p.ExpectedArrivals(p.Duration())))),
 		"",
-		dim("⏎ run against the current request · esc cancel"),
+		dim("⏎ run against the current request · e edit shape · n new · esc cancel"),
 	)
 	return strings.Join(lines, "\n")
 }

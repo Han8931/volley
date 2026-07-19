@@ -175,10 +175,23 @@ p50/p95/p99/max latency, and target + achieved charts.
 
 | Key / command | Action |
 |---------------|--------|
-| `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `esc` cancel) |
+| `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `e` edit · `n` new · `esc` cancel) |
 | `:loadtest <name>` / `:lt <name>` | run a named profile directly |
+| `:loadnew <name> [template]` | create your own shape in the shape editor, starting from a template profile |
+| `:loadedit <name>` | reshape a saved profile in the shape editor |
 | `esc` | stop a running test (in-flight requests are cancelled) |
 | `esc` / `T` on the results | close the results / run the same profile again |
+
+### Shape editor
+
+`:loadnew` / `:loadedit` (or `e` in the picker) open a dedicated editing mode:
+the profile is drawn as a chart with its points marked, and you sculpt it with
+Vim-style keys — `h/l` select a point, `j/k` (`J/K`) adjust its rate by 1 (10)
+rps, `H/L` (`</>`') move it in time by 1s (10s), `a` adds a point, `x` deletes
+one. Moving a point onto its neighbour's time makes a vertical jump. `w` saves
+(validated), `⏎` saves and goes straight to the run confirmation, `E` opens the
+raw JSON in `$EDITOR` for exact values, and `esc` leaves — asking first if you
+have unsaved changes.
 
 Profiles are plain JSON in `loadprofiles/` beside your collections; the five
 default shapes (constant, ramp-up, spike, step, sawtooth) are written there on

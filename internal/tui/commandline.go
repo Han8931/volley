@@ -56,6 +56,10 @@ func (m Model) commandGhost() string {
 		return "<group>/<name>"
 	case v == "mkgroup " || v == "group " || v == "mkg " || v == "rmgroup " || v == "rmg ":
 		return "<group>"
+	case v == "loadtest " || v == "lt " || v == "loadedit " || v == "ltedit ":
+		return "<profile>"
+	case v == "loadnew " || v == "ltnew ":
+		return "<name> [template]"
 	}
 	return ""
 }
@@ -237,6 +241,22 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			name = strings.Join(fields[1:], " ")
 		}
 		return m.openExternalEditor(name)
+	case "loadnew", "ltnew":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :loadnew <name> [template profile]"
+			return m, nil
+		}
+		template := ""
+		if len(fields) > 2 {
+			template = fields[2]
+		}
+		return m.newLoadProfile(fields[1], template)
+	case "loadedit", "ltedit":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :loadedit <profile>"
+			return m, nil
+		}
+		return m.editLoadProfileByName(fields[1])
 	case "loadtest", "lt":
 		if len(fields) < 2 {
 			return m.openLoadPicker()
@@ -425,11 +445,17 @@ type editorFinishedMsg struct {
 	err        error
 }
 
-func (m Model) openExternalEditor(name string) (tea.Model, tea.Cmd) {
+// resolveEditor returns the user's editor command ($VISUAL, then $EDITOR).
+func resolveEditor() string {
 	editor := strings.TrimSpace(os.Getenv("VISUAL"))
 	if editor == "" {
 		editor = strings.TrimSpace(os.Getenv("EDITOR"))
 	}
+	return editor
+}
+
+func (m Model) openExternalEditor(name string) (tea.Model, tea.Cmd) {
+	editor := resolveEditor()
 	if editor == "" {
 		m.statusMsg = "set $VISUAL or $EDITOR to use :editor"
 		return m, nil

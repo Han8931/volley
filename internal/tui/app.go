@@ -360,6 +360,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loadPicker {
 			return m.updateLoadPicker(msg)
 		}
+		if m.shapeEdit {
+			return m.updateShapeEditor(msg)
+		}
 		if m.pendingAction != pendingNone {
 			return m.resolveSaveConfirm(msg)
 		}
@@ -379,6 +382,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editorFinishedMsg:
 		return m.applyEditorResult(msg)
+
+	case profileEditorFinishedMsg:
+		return m.applyProfileEditorResult(msg)
 
 	case loadTickMsg:
 		return m.handleLoadTick(msg)
@@ -1100,7 +1106,7 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Don't let clicks reach the panes while a modal/prompt owns the screen.
 	if m.showHelp || m.cmdActive || m.collectionMenu ||
 		m.pendingAction != pendingNone || m.confirmDelete != "" || m.confirmCloseTab ||
-		m.loadPicker || m.loadConfirm {
+		m.loadPicker || m.loadConfirm || m.shapeEdit {
 		return m, nil
 	}
 	if m.sendButtonClicked(msg) {
@@ -1301,39 +1307,37 @@ func (m Model) sendButtonClicked(msg tea.MouseMsg) bool {
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
 		return false
 	}
-	startX, endX, y := m.sendButtonRect()
+	startX, endX, _, _, y := m.urlBarButtonRects()
 	return msg.Y == y && msg.X >= startX && msg.X <= endX
 }
 
-// testButtonClicked reports whether msg hit the TEST button, which sits one
-// gap cell to the left of SEND in the URL bar.
+// testButtonClicked reports whether msg hit the TEST button at the URL bar's
+// right edge.
 func (m Model) testButtonClicked(msg tea.MouseMsg) bool {
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
 		return false
 	}
-	sendStartX, _, y := m.sendButtonRect()
-	testW := lipgloss.Width(m.testButtonView())
-	endX := sendStartX - 2 // skip the separating space
-	startX := endX - testW + 1
+	_, _, startX, endX, y := m.urlBarButtonRects()
 	return msg.Y == y && msg.X >= startX && msg.X <= endX
 }
 
-// sendButtonRect is the SEND button's clickable span: right-aligned inside the
-// URL pane's content row. TEST hit-testing is measured from it.
-func (m Model) sendButtonRect() (startX, endX, y int) {
+// urlBarButtonRects is the clickable geometry of the URL bar's buttons,
+// mirroring viewURLBar's "… SEND TEST" order: TEST right-aligned at the pane
+// edge, SEND one gap cell before it.
+func (m Model) urlBarButtonRects() (sendStart, sendEnd, testStart, testEnd, y int) {
 	l := m.computeLayout()
 	paneX := 0
 	if m.collectionShown {
 		paneX = l.collectionInnerW + borderOverhead + l.gap
 	}
-	// The URL pane sits after the fixed-width method selector on the top row,
-	// so the SEND button (right-aligned inside the URL pane) is offset by it.
+	// The URL pane sits after the fixed-width method selector on the top row.
 	urlPaneX := paneX + l.methodInnerW + borderOverhead + l.gap
-	buttonW := lipgloss.Width(m.sendButtonView())
 	y = m.topBarY() + 1 // URL pane content row, below the top border.
-	startX = urlPaneX + l.urlInnerW - buttonW
-	endX = urlPaneX + l.urlInnerW - 1
-	return startX, endX, y
+	testEnd = urlPaneX + l.urlInnerW - 1
+	testStart = testEnd - lipgloss.Width(m.testButtonView()) + 1
+	sendEnd = testStart - 2 // skip the separating space
+	sendStart = sendEnd - lipgloss.Width(m.sendButtonView()) + 1
+	return sendStart, sendEnd, testStart, testEnd, y
 }
 
 // copyButtonClicked reports whether msg hit the copy pill on the response

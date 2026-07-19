@@ -80,9 +80,21 @@ var helpSections = []struct {
 	{"Load testing", [][2]string{
 		{"TEST  ·  :loadtest", "pick a load profile (shape preview), confirm, run"},
 		{":loadtest <name>", "run a named profile against the current request"},
+		{":loadnew <name>", "create your own shape (optionally from a template profile)"},
+		{":loadedit <name>", "reshape a saved profile"},
+		{"e / n (in picker)", "edit the highlighted profile · start a new one"},
 		{"esc", "stop a running test / close finished results"},
 		{"T (in results)", "run the same profile again"},
 		{"profiles", "JSON files in config dir loadprofiles/ — edit or add your own"},
+	}},
+	{"Shape editor (:loadnew / :loadedit)", [][2]string{
+		{"h / l", "select previous / next point on the plot"},
+		{"j / k  ·  J / K", "rate −/+1 · −/+10 rps"},
+		{"H / L  ·  < / >", "time −/+1s · −/+10s (first point stays at 0s)"},
+		{"a  ·  x", "add a point after the selection · delete it"},
+		{"w  ·  ⏎", "save · save and run it"},
+		{"E", "open the raw JSON in $EDITOR instead"},
+		{"esc", "leave (asks before discarding unsaved changes)"},
 	}},
 	{"Command line", [][2]string{
 		{":save users/list", "save current request"},

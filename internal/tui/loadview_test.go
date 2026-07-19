@@ -3,6 +3,7 @@ package tui
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,6 +173,208 @@ func TestTargetSeries(t *testing.T) {
 	for _, v := range s {
 		if v != 10 {
 			t.Errorf("constant series should be flat 10, got %v", s)
+		}
+	}
+}
+
+func TestLoadNewEntersShapeMode(t *testing.T) {
+	m := loadModel(t)
+	next, _ := m.executeCommand("loadnew constant")
+	if got := next.(Model).statusMsg; !strings.Contains(got, "already exists") {
+		t.Errorf("existing name must be refused, got %q", got)
+	}
+	next, _ = m.executeCommand("loadnew mine spike")
+	got := next.(Model)
+	if !got.shapeEdit || got.shapeName != "mine" {
+		t.Fatalf("loadnew should enter shape mode on the new name, got edit=%v name=%q", got.shapeEdit, got.shapeName)
+	}
+	if got.shapeProfile().Peak() != 100 {
+		t.Errorf("template shape should carry over, peak = %v", got.shapeProfile().Peak())
+	}
+	if !got.shapeDirty() {
+		t.Error("a brand-new shape must count as unsaved")
+	}
+	if _, err := got.loadStore.Load("mine"); err == nil {
+		t.Error("nothing should be stored before w")
+	}
+	next, _ = m.executeCommand("loadnew mine no-such-template")
+	if got := next.(Model).statusMsg; !strings.Contains(got, "no-such-template") {
+		t.Errorf("unknown template must be reported, got %q", got)
+	}
+	next, _ = m.executeCommand("loadedit nope")
+	if got := next.(Model).statusMsg; !strings.Contains(got, "no load profile") {
+		t.Errorf(":loadedit on a missing profile must error, got %q", got)
+	}
+}
+
+func TestShapeEditorKeys(t *testing.T) {
+	m := loadModel(t)
+	next, _ := m.executeCommand("loadedit constant") // seeds defaults, opens mode
+	m = next.(Model)
+	if !m.shapeEdit || len(m.shapePoints) != 2 {
+		t.Fatalf("mode should open on constant's 2 points, got %v", m.shapePoints)
+	}
+
+	// k raises the selected (first) point's rate; K by 10.
+	m = step(step(m, runes("k")), runes("K"))
+	if got := m.shapePoints[0].RPS; got != 31 {
+		t.Errorf("rate after k K = %v, want 31", got)
+	}
+	// The first point's time is pinned.
+	m = step(m, runes("L"))
+	if m.shapePoints[0].At != 0 {
+		t.Error("first point must stay at 0s")
+	}
+	// l selects the last point; L extends the duration by 1s.
+	m = step(step(m, runes("l")), runes("L"))
+	if got := m.shapeProfile().Duration(); got != 31*time.Second {
+		t.Errorf("duration = %v, want 31s", got)
+	}
+	// H beyond the previous point clamps against it.
+	for i := 0; i < 40; i++ {
+		m = step(m, runes("H"))
+	}
+	if got := time.Duration(m.shapePoints[1].At); got != 0 {
+		t.Errorf("time clamps at the previous point, got %v", got)
+	}
+	// a adds a point after the last; x deletes it again.
+	m = step(m, runes("a"))
+	if len(m.shapePoints) != 3 || m.shapeSel != 2 {
+		t.Fatalf("a should append and select, points=%d sel=%d", len(m.shapePoints), m.shapeSel)
+	}
+	m = step(m, runes("x"))
+	if len(m.shapePoints) != 2 {
+		t.Errorf("x should delete, points=%d", len(m.shapePoints))
+	}
+	// The two-point minimum is protected.
+	m = step(m, runes("x"))
+	if len(m.shapePoints) != 2 {
+		t.Error("deleting below two points must be refused")
+	}
+
+	// The editor renders chart, readout, and marker.
+	view := stripANSI(m.View())
+	for _, want := range []string{"SHAPE constant", "point 2/2", "rps", "●"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("editor view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestShapeEditorSaveAndDiscard(t *testing.T) {
+	m := loadModel(t)
+	next, _ := m.executeCommand("loadnew mine")
+	m = next.(Model)
+
+	// w persists the working shape.
+	m = step(step(m, runes("K")), runes("w"))
+	p, err := m.loadStore.Load("mine")
+	if err != nil || p.Peak() != 30 {
+		t.Fatalf("saved profile = %+v, %v", p, err)
+	}
+	if m.shapeDirty() {
+		t.Error("saving must reset the dirty state")
+	}
+
+	// esc with edits arms the discard confirm; y leaves without saving.
+	m = step(m, runes("K"))
+	m = step(m, keyEsc)
+	if !m.shapeConfirmDiscard {
+		t.Fatal("esc with unsaved edits should ask before discarding")
+	}
+	m = step(m, runes("y"))
+	if m.shapeEdit {
+		t.Error("y should leave the editor")
+	}
+	if p, _ := m.loadStore.Load("mine"); p.Peak() != 30 {
+		t.Errorf("discarded edit must not be stored, peak = %v", p.Peak())
+	}
+
+	// ⏎ saves and flows into the run confirmation.
+	m.url.SetText("https://example.test")
+	next, _ = m.executeCommand("loadedit mine")
+	m = next.(Model)
+	m = step(m, runes("K"))
+	next, _ = m.updateShapeEditor(keyEnter)
+	m = next.(Model)
+	if m.shapeEdit || !m.loadConfirm {
+		t.Errorf("enter should save and arm the run confirm, edit=%v confirm=%v", m.shapeEdit, m.loadConfirm)
+	}
+	if p, _ := m.loadStore.Load("mine"); p.Peak() != 40 {
+		t.Errorf("enter must save first, peak = %v", p.Peak())
+	}
+}
+
+func TestApplyProfileEditorResult(t *testing.T) {
+	m := loadModel(t)
+	if err := m.loadStore.EnsureDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	write := func(content string) string {
+		t.Helper()
+		f := filepath.Join(t.TempDir(), "edited.json")
+		if err := osWriteFile(f, content); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+
+	// A valid edit is saved and the picker reopens on it.
+	good := write(`{"name":"mine","points":[{"at":"0s","rps":2},{"at":"8s","rps":20}]}`)
+	next, _ := m.applyProfileEditorResult(profileEditorFinishedMsg{path: good, name: "mine"})
+	got := next.(Model)
+	if p, err := got.loadStore.Load("mine"); err != nil || p.Peak() != 20 {
+		t.Fatalf("edited profile not saved: %v %v", p, err)
+	}
+	if !got.loadPicker || got.pickerItems[got.pickerIdx].Name != "mine" {
+		t.Errorf("picker should reopen on the saved profile, idx=%d", got.pickerIdx)
+	}
+
+	// Invalid JSON or an invalid shape is rejected and nothing is stored.
+	for _, tc := range []struct{ name, content string }{
+		{"broken", `{`},
+		{"badshape", `{"points":[{"at":"0s","rps":-4}]}`},
+	} {
+		next, _ = m.applyProfileEditorResult(profileEditorFinishedMsg{path: write(tc.content), name: tc.name})
+		if _, err := next.(Model).loadStore.Load(tc.name); err == nil {
+			t.Errorf("%s must not be saved", tc.name)
+		}
+		if next.(Model).statusMsg == "" {
+			t.Errorf("%s: failure must be reported", tc.name)
+		}
+	}
+}
+
+func TestPickerNPrefillsLoadnew(t *testing.T) {
+	m := loadModel(t)
+	next, _ := m.executeCommand("loadtest")
+	m = next.(Model)
+	next, _ = m.updateLoadPicker(runes("n"))
+	m = next.(Model)
+	if m.loadPicker || !m.cmdActive || m.cmd.Value() != "loadnew " {
+		t.Errorf("n should close the picker and prefill :loadnew, got active=%v value=%q", m.cmdActive, m.cmd.Value())
+	}
+}
+
+// osWriteFile writes a small fixture file for the editor-result tests.
+func osWriteFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func TestFormatRunDuration(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "30s"},
+		{50 * time.Second, "50s"},
+		{time.Minute, "1m"},
+		{90 * time.Second, "1m30s"},
+		{2 * time.Hour, "2h"},
+		{0, "0s"},
+	} {
+		if got := formatRunDuration(tc.d); got != tc.want {
+			t.Errorf("formatRunDuration(%v) = %q, want %q", tc.d, got, tc.want)
 		}
 	}
 }

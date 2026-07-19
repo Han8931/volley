@@ -132,9 +132,10 @@ func (m Model) viewURLBar(l layout) string {
 	urlW := urlInputWidth(l)
 	urlView := m.renderURLField(urlW)
 
-	// The right edge holds the TEST and SEND buttons, preceded by the inline
-	// timeout readout when the bar has room (or is actively being edited).
-	right := m.testButtonView() + " " + m.sendButtonView()
+	// The right edge holds the SEND button then TEST at the far edge (primary
+	// action first), preceded by the inline timeout readout when the bar has
+	// room (or is actively being edited).
+	right := m.sendButtonView() + " " + m.testButtonView()
 	if l.showTimeout || m.timeoutInput.Focused() {
 		right = m.timeoutSegView() + " " + right
 	}
@@ -376,6 +377,8 @@ func (m Model) viewBody(l layout) string {
 // scrollable body viewport.
 func (m Model) viewResponseInner() string {
 	switch {
+	case m.shapeEdit:
+		return m.viewShapeEditor()
 	case m.loadPicker:
 		return m.viewLoadPicker()
 	case m.loadRun != nil:
@@ -502,6 +505,8 @@ func (m Model) viewStatusBar() string {
 		hints = " window: h/j/k/l pick a pane"
 	case m.focusHints:
 		hints = " jump: 1 tree · 2 method · 3 url · 4 request · 5 response · esc cancel"
+	case m.shapeEdit:
+		hints = " shape: h/l point · j/k rate · H/L time · a/x add/del · w save · ⏎ run · esc"
 	case m.loadRunning():
 		hints = " load test running · esc stop"
 	case m.loadRun != nil && m.focus == focusResponse:
