@@ -131,7 +131,11 @@ Where a Vim TUI can feel *faster* than the GUIs.
   - [ ] Run config: concurrency, duration **or** N requests, target RPS. **M.**
   - [ ] Live TUI dashboard: RPS, in-flight, latency p50/p90/p99, status
         histogram, error rate, sparkline. **L.**
-  - [ ] Summary report + export (JSON/CSV, plus an HTML CI artifact). **S.**
+  - [x] Summary report + export — done (2026-07-19): finished runs print a
+        k6-style analysis (`loadtest.Summary.Render`) in the results view and
+        auto-save as JSON under `loadresults/<profile>-<timestamp>.json`
+        (`loadtest.ResultStore`, with `List`/`Latest` ready for comparison).
+        _Remaining: CSV export and an HTML CI artifact if ever needed._
   - [ ] **Generate load test from the current request** — capstone: take the
         open/saved `model.Request` and hand it to `loadx` (`:load` /
         `:loadtest`). Turns the API client and the load tester into one

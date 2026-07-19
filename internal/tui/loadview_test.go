@@ -18,7 +18,9 @@ import (
 func loadModel(t *testing.T) Model {
 	t.Helper()
 	m := step(New(), tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.loadStore = loadtest.Store{Root: filepath.Join(t.TempDir(), "loadprofiles")}
+	dir := t.TempDir()
+	m.loadStore = loadtest.Store{Root: filepath.Join(dir, "loadprofiles")}
+	m.resultStore = loadtest.ResultStore{Root: filepath.Join(dir, "loadresults")}
 	return m
 }
 
@@ -127,6 +129,27 @@ func TestLoadRunLifecycle(t *testing.T) {
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "done") || !strings.Contains(view, "achieved") {
 		t.Errorf("finished view missing summary:\n%s", view)
+	}
+
+	// Completion builds the k6-style analysis once and auto-saves it.
+	if m.loadSummary == nil {
+		t.Fatal("finished run should build a summary")
+	}
+	if m.loadSummary.OK == 0 || m.loadSummary.Profile != "quick" {
+		t.Errorf("summary = %+v", m.loadSummary)
+	}
+	if !strings.Contains(view, "percentiles") || !strings.Contains(view, "p90") {
+		t.Errorf("finished view missing analysis block:\n%s", view)
+	}
+	files, err := os.ReadDir(m.resultStore.Root)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("finished run should save one result file, got %v, %v", files, err)
+	}
+	if !strings.HasPrefix(files[0].Name(), "quick-") {
+		t.Errorf("result file = %q", files[0].Name())
+	}
+	if !strings.Contains(m.statusMsg, "saved "+files[0].Name()) {
+		t.Errorf("status should report the saved result, got %q", m.statusMsg)
 	}
 
 	// esc dismisses the finished results and frees the response pane.

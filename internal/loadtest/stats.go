@@ -11,16 +11,18 @@ import (
 // Stats aggregates the outcomes of a run. It is written by worker goroutines
 // and read by the UI through Snapshot, so all access is mutex-guarded.
 type Stats struct {
-	mu        sync.Mutex
-	start     time.Time
-	latencies []time.Duration // completed requests, in completion order
-	errors    int
-	canceled  int
-	dropped   int
-	inFlight  int
-	buckets   []Bucket // per-second aggregates for the live chart
-	done      bool
-	elapsed   time.Duration // frozen at completion; live until then
+	mu         sync.Mutex
+	start      time.Time
+	latencies  []time.Duration // completed requests, in completion order
+	sumLatency time.Duration   // running total over latencies, for the mean
+	errors     int
+	canceled   int
+	dropped    int
+	inFlight   int
+	classes    [6]int   // status classes: [0] transport errors, [1..5] 1xx..5xx
+	buckets    []Bucket // per-second aggregates for the live chart
+	done       bool
+	elapsed    time.Duration // frozen at completion; live until then
 }
 
 // Bucket is one second of the run, for plotting achieved load over time.
@@ -52,8 +54,11 @@ type Snapshot struct {
 	Dropped       int // scheduled sends that found no free worker
 	InFlight      int
 	AchievedRPS   float64 // completions per second of elapsed time
-	P50, P95, P99 time.Duration
-	Max           time.Duration
+	P50, P90, P95, P99 time.Duration
+	Min, Mean, Max     time.Duration
+	// StatusClasses counts completions by response class: index 0 is
+	// transport errors (no response), 1..5 are 1xx..5xx.
+	StatusClasses [6]int
 	Buckets       []Bucket
 }
 
@@ -95,8 +100,14 @@ func (s *Stats) recordResult(offset, latency time.Duration, status int, err erro
 		return
 	}
 	s.latencies = append(s.latencies, latency)
+	s.sumLatency += latency
 	b.Completed++
 	b.SumLatency += latency
+	if class := status / 100; class >= 1 && class <= 5 {
+		s.classes[class]++
+	} else {
+		s.classes[0]++ // no usable status: a transport-level failure
+	}
 	if err != nil || status >= 500 {
 		s.errors++
 		b.Errors++
@@ -140,6 +151,7 @@ func (s *Stats) Snapshot() Snapshot {
 		Buckets:   append([]Bucket(nil), s.buckets...),
 	}
 	snap.Sent = snap.Completed + snap.Canceled + s.inFlight
+	snap.StatusClasses = s.classes
 	if secs := elapsed.Seconds(); secs > 0 {
 		snap.AchievedRPS = float64(snap.Completed) / secs
 	}
@@ -147,8 +159,11 @@ func (s *Stats) Snapshot() Snapshot {
 		sorted := append([]time.Duration(nil), s.latencies...)
 		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 		snap.P50 = percentile(sorted, 0.50)
+		snap.P90 = percentile(sorted, 0.90)
 		snap.P95 = percentile(sorted, 0.95)
 		snap.P99 = percentile(sorted, 0.99)
+		snap.Min = sorted[0]
+		snap.Mean = s.sumLatency / time.Duration(len(sorted))
 		snap.Max = sorted[len(sorted)-1]
 	}
 	return snap

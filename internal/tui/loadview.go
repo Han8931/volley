@@ -25,14 +25,17 @@ import (
 
 // loadState is the load-testing concern on the root Model.
 type loadState struct {
-	loadStore loadtest.Store // profile files on disk (seeded on first use)
+	loadStore   loadtest.Store       // profile files on disk (seeded on first use)
+	resultStore loadtest.ResultStore // finished-run summaries on disk
 
-	loadRun     *loadtest.Run     // active or just-finished run; nil = no load view
-	loadProfile loadtest.Profile  // profile of the current run
-	loadTarget  model.Request     // request the run fires (frozen at start)
-	loadSnap    loadtest.Snapshot // latest polled snapshot
-	loadSeq     int               // invalidates stale tick messages after stop/restart
-	loadStopped bool              // user pressed esc; distinguishes "stopped" from "done"
+	loadRun       *loadtest.Run     // active or just-finished run; nil = no load view
+	loadProfile   loadtest.Profile  // profile of the current run
+	loadTarget    model.Request     // request the run fires (frozen at start)
+	loadStartedAt time.Time         // wall-clock start, stamped into the summary
+	loadSnap      loadtest.Snapshot // latest polled snapshot
+	loadSummary   *loadtest.Summary // built once when the run completes
+	loadSeq       int               // invalidates stale tick messages after stop/restart
+	loadStopped   bool              // user pressed esc; distinguishes "stopped" from "done"
 
 	loadPicker  bool // profile picker is up in the response pane
 	pickerItems []loadtest.Profile
@@ -352,7 +355,9 @@ func (m Model) startLoadTest(p loadtest.Profile) (tea.Model, tea.Cmd) {
 	m.loadRun = run
 	m.loadProfile = p
 	m.loadTarget = built
+	m.loadStartedAt = time.Now()
 	m.loadSnap = loadtest.Snapshot{}
+	m.loadSummary = nil
 	m.loadStopped = false
 	m.loadSeq++
 	m = m.setFocus(focusResponse)
@@ -371,9 +376,18 @@ func (m Model) handleLoadTick(msg loadTickMsg) (tea.Model, tea.Cmd) {
 		if m.loadStopped {
 			verb = "stopped"
 		}
-		m.statusMsg = fmt.Sprintf("load test %s: %d ok · %d errors · %d cancelled · %d dropped — esc to close",
-			verb, m.loadSnap.Completed-m.loadSnap.Errors,
-			m.loadSnap.Errors, m.loadSnap.Canceled, m.loadSnap.Dropped)
+		saved := ""
+		if m.loadSummary == nil { // first tick after completion: summarize once
+			sum := loadtest.Summarize(m.loadProfile, m.loadTarget.Method, m.loadTarget.URL,
+				m.loadStartedAt, m.loadSnap, m.loadStopped)
+			m.loadSummary = &sum
+			if name, err := m.resultStore.Save(sum); err != nil {
+				saved = " · result save failed: " + err.Error()
+			} else {
+				saved = " · saved " + name
+			}
+		}
+		m.statusMsg = fmt.Sprintf("load test %s%s — esc to close · T to rerun", verb, saved)
 		return m, nil
 	}
 	return m, loadTick(m.loadSeq)
@@ -545,9 +559,12 @@ func (m Model) viewLoadRun() string {
 	case snap.Done:
 		state = lipgloss.NewStyle().Foreground(colOK).Bold(true).Render("done")
 	}
+	// The live elapsed clock is truncated to 100ms — raw time.Since output
+	// would flicker nanosecond noise ("2.000418958s") in the header.
 	head := title("LOAD TEST ") + lipgloss.NewStyle().Foreground(colFg).Bold(true).Render(p.Name) +
 		"  " + state +
-		dim(fmt.Sprintf("  %s / %s", formatRunDuration(snap.Elapsed), formatRunDuration(p.Duration())))
+		dim(fmt.Sprintf("  %s / %s", formatRunDuration(snap.Elapsed.Truncate(100*time.Millisecond)),
+			formatRunDuration(p.Duration())))
 
 	okCount := snap.Completed - snap.Errors
 	counts := fmt.Sprintf(" ok %d · err %d · cancel %d · drop %d · in-flight %d",
@@ -575,9 +592,36 @@ func (m Model) viewLoadRun() string {
 		foot = dim("esc close · T run again")
 	}
 
-	lines := []string{head, "", countStyle, rates, lat, ""}
+	lines := []string{head, ""}
+	if snap.Done && m.loadSummary != nil {
+		// The finished view swaps the live counters for the k6-style analysis.
+		lines = append(lines, styleSummary(*m.loadSummary)...)
+	} else {
+		lines = append(lines, countStyle, rates, lat)
+	}
+	lines = append(lines, "")
 	lines = append(lines, chart...)
 	lines = append(lines, "", foot)
 	out := strings.Join(lines, "\n")
 	return lipgloss.NewStyle().MaxWidth(width).Render(out)
+}
+
+// styleSummary colors the k6-style analysis block for the results view: the
+// verdict line green (clean) or warning-toned (errors/drops), dotted labels
+// dimmed, values in the default foreground.
+func styleSummary(s loadtest.Summary) []string {
+	raw := strings.Split(s.Render(), "\n")
+	headStyle := lipgloss.NewStyle().Foreground(colOK).Bold(true)
+	if s.Errors > 0 || s.Dropped > 0 {
+		headStyle = lipgloss.NewStyle().Foreground(colMethod).Bold(true)
+	}
+	out := []string{headStyle.Render(raw[0])}
+	for _, ln := range raw[1:] {
+		if label, value, ok := strings.Cut(ln, ": "); ok {
+			out = append(out, dim(label+": ")+value)
+		} else {
+			out = append(out, ln)
+		}
+	}
+	return out
 }

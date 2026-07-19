@@ -86,6 +86,7 @@ var helpSections = []struct {
 		{"e / E / n (in picker)", "edit shape · edit JSON · start a new profile"},
 		{"esc", "stop a running test / close finished results"},
 		{"T (in results)", "run the same profile again"},
+		{"results", "finished runs print a k6-style analysis, auto-saved to loadresults/"},
 		{"profiles", "JSON files in config dir loadprofiles/ — edit or add your own"},
 	}},
 	{"Shape editor (:loadnew / :loadedit)", [][2]string{

@@ -247,7 +247,10 @@ func New() Model {
 			vp:   vp,
 		},
 		cmdlineState: cmdlineState{cmd: cmd},
-		loadState:    loadState{loadStore: loadtest.DefaultStore()},
+		loadState: loadState{
+			loadStore:   loadtest.DefaultStore(),
+			resultStore: loadtest.DefaultResultStore(),
+		},
 	}
 	m = m.setFocus(focusCollection)
 	if listErr != nil {

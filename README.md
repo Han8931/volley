@@ -173,6 +173,24 @@ confirmation showing exactly what will be fired at which URL, the response pane
 becomes a live run view: ok/error/cancelled/dropped counters, achieved vs. target RPS,
 p50/p95/p99/max latency, and target + achieved charts.
 
+When a run finishes (or is stopped), the view prints a k6-style analysis —
+requests sent/completed, error rate, achieved vs. peak RPS, min/avg/max and
+p50/p90/p95/p99 latency, and a status-class breakdown (2xx/4xx/5xx/net):
+
+```text
+✓ constant — GET https://api.example.com/v1/ping  (30s)
+  requests.....: 300 sent of 300 planned · 300 completed
+  ok / error...: 300 / 0 (0.0% errors)
+  rps..........: 10.0 achieved · 10 peak target
+  latency......: min 12ms · avg 48ms · max 402ms
+  percentiles..: p50 42ms · p90 101ms · p95 118ms · p99 240ms
+  status.......: 2xx 300
+```
+
+Every finished run is also saved as JSON under `loadresults/` (beside
+`loadprofiles/`), named `<profile>-<timestamp>.json` — the raw material for
+comparing runs and CI trend lines.
+
 | Key / command | Action |
 |---------------|--------|
 | `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `e` edit shape · `E` edit JSON · `n` new · `esc` cancel) |
@@ -262,10 +280,11 @@ sending.
 - [x] Request tabs (per-tab in-memory buffers with their own dirty state)
 - [x] JSON syntax highlighting for responses
 - [x] Load testing: shaped RPS profiles, worker cap, p50/p95/p99, live charts
+- [x] In-TUI load-shape editor (edit points without leaving Volley)
+- [x] Load-test results: k6-style end-of-run analysis, auto-saved JSON history
+- [ ] Load-test comparison (`:loadcompare` — did my change regress p99?)
 - [ ] Tab session persistence across restarts
 - [ ] Environments and persisted variable scopes
-- [ ] In-TUI load-shape editor (edit points without leaving Volley)
-- [ ] Load-test result history / export
 
 > Note: collections are stored as native JSON. Posting/Postman/Bruno collection
 > import/export is not implemented yet; curl import/export is supported.
