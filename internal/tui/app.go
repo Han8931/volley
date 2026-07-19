@@ -149,6 +149,7 @@ type cmdlineState struct {
 	cmdHistory    []string
 	cmdHistoryIdx int
 	cmdDraft      string
+	cmdHint       string // Tab-completion feedback, shown inline while typing
 }
 
 // promptState holds the transient overlays and confirmations that gate input:

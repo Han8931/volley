@@ -80,6 +80,10 @@ These are the things whose absence makes a Postman user bounce.
         session override and add a way to clear overrides. **M.**
   - [ ] Add Tab completion for environment names and variable names, plus
         Up/Down command-history compatibility for the new commands. **S.**
+        _Foundation done: the command line already Tab-completes verbs, saved
+        request/group names, load profile names, and methods
+        (`completeCommand`/`argCandidates` in `commandline.go`) — env names
+        slot in as one more `argCandidates` case._
   - [ ] Show the active environment in the persistent status/tab area and show
         variable names in an environment inspector; mask values marked sensitive
         and never place resolved secrets in status messages. **M.**

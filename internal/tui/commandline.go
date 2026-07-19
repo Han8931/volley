@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,7 +61,8 @@ func (m Model) commandGhost() string {
 		return "<group>/<name>"
 	case v == "mkgroup " || v == "group " || v == "mkg " || v == "rmgroup " || v == "rmg ":
 		return "<group>"
-	case v == "loadtest " || v == "lt " || v == "loadedit " || v == "ltedit ":
+	case v == "loadtest " || v == "lt " || v == "loadedit " || v == "ltedit " ||
+		v == "loadeditor " || v == "lteditor ":
 		return "<profile>"
 	case v == "loadnew " || v == "ltnew ":
 		return "<name> [template]"
@@ -70,6 +72,7 @@ func (m Model) commandGhost() string {
 
 func (m Model) closeCommandLine() Model {
 	m.cmdActive = false
+	m.cmdHint = ""
 	m.cmd.Blur()
 	return m
 }
@@ -89,7 +92,7 @@ func (m Model) updateCommandLine(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyTab:
 		if m.cmdKind == ':' {
-			return m.completeLoadEdit(), nil
+			return m.completeCommand(), nil
 		}
 	case tea.KeyEnter:
 		input := m.cmd.Value()
@@ -103,6 +106,7 @@ func (m Model) updateCommandLine(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.runSearch(input), nil
 	}
+	m.cmdHint = "" // stale completion feedback drops on any other key
 	var cmd tea.Cmd
 	m.cmd, cmd = m.cmd.Update(msg)
 	return m, cmd
@@ -157,47 +161,175 @@ func (m Model) nextCommand() Model {
 	return m
 }
 
-// completeLoadEdit completes a profile name for :loadedit and its :ltedit
-// alias. A unique match is inserted; multiple matches extend to their shared
-// prefix and are reported in the status line.
-func (m Model) completeLoadEdit() Model {
+// commandVerbs are the ":" commands offered by Tab completion — the canonical
+// spelling of each command. Aliases (:e, :lt, :tabc, …) still execute; they
+// just aren't offered, to keep ambiguous listings readable.
+var commandVerbs = []string{
+	"copy", "delete", "editor", "help", "import", "loadedit", "loadeditor",
+	"loadnew", "loadtest", "ls", "method", "mkgroup", "new", "open", "quit",
+	"rename", "rengroup", "rmgroup", "save", "send", "set", "tabclose",
+	"tabnew", "tabnext", "tabonly", "tabprevious", "timeout", "wq",
+}
+
+// completeCommand implements Tab completion for the ":" command line: the
+// command verb while the first word is being typed, then per-command argument
+// values (saved requests, groups, load profiles, methods).
+func (m Model) completeCommand() Model {
 	value := m.cmd.Value()
-	verb, prefix, ok := strings.Cut(value, " ")
-	if !ok {
-		verb, prefix = value, ""
-	}
-	if (verb != "loadedit" && verb != "ltedit") || strings.Contains(strings.TrimSpace(prefix), " ") {
+	if strings.HasPrefix(value, " ") {
 		return m
 	}
-	m.statusMsg = ""
-	prefix = strings.TrimSpace(prefix)
+	fields := strings.Fields(value)
+	trailingSpace := strings.HasSuffix(value, " ")
+	if len(fields) == 0 || (len(fields) == 1 && !trailingSpace) {
+		prefix := ""
+		if len(fields) == 1 {
+			prefix = fields[0]
+		}
+		// A unique verb gets a trailing space so Tab can continue on its argument.
+		return m.completeToken("", prefix, commandVerbs, "command", " ")
+	}
+	verb, args := fields[0], fields[1:]
+	argIdx := len(args)
+	prefix := ""
+	if !trailingSpace {
+		argIdx--
+		prefix = args[argIdx]
+	}
+	candidates, what, errMsg := m.argCandidates(verb, argIdx)
+	if errMsg != "" {
+		m.cmdHint = errMsg
+		return m
+	}
+	if candidates == nil {
+		return m
+	}
+	head := strings.Join(append([]string{verb}, args[:argIdx]...), " ") + " "
+	return m.completeToken(head, prefix, candidates, what, "")
+}
+
+// completeToken replaces the token after head with the completion of prefix
+// against candidates. A unique match is inserted (followed by uniqueSuffix);
+// multiple matches extend to their shared prefix and are listed in the status
+// line.
+func (m Model) completeToken(head, prefix string, candidates []string, what, uniqueSuffix string) Model {
+	m.cmdHint = ""
+	matches := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if strings.HasPrefix(c, prefix) {
+			matches = append(matches, c)
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		m.cmdHint = "no " + what + " matching " + prefix
+		return m
+	}
+	// A match identical to what's already typed adds nothing — drop it so a
+	// completed group prefix ("auth/") can continue into its children.
+	if len(matches) > 1 {
+		kept := matches[:0]
+		for _, c := range matches {
+			if c != prefix {
+				kept = append(kept, c)
+			}
+		}
+		matches = kept
+	}
+	completed := matches[0] + uniqueSuffix
+	if len(matches) > 1 {
+		completed = commonPrefix(matches)
+		m.cmdHint = what + "s: " + strings.Join(matches, " · ")
+	}
+	m.cmd.SetValue(head + completed)
+	m.cmd.CursorEnd()
+	return m
+}
+
+// argCandidates returns the completion candidates for the argIdx'th argument
+// of verb, or nil when that position takes free text. errMsg is set when a
+// candidate source fails and should be surfaced instead of completing.
+func (m Model) argCandidates(verb string, argIdx int) (candidates []string, what string, errMsg string) {
+	switch verb {
+	case "open", "e", "edit", "delete", "del", "rm", "editor", "tabnew", "tabe", "tabedit",
+		"new", "enew", "w", "write", "save", "rename", "move", "mv":
+		if argIdx == 0 {
+			return m.savedNameCandidates()
+		}
+	case "copy", "cp":
+		if argIdx == 0 {
+			names, what, errMsg := m.savedNameCandidates()
+			return append(names, "curl"), what, errMsg
+		}
+	case "mkgroup", "group", "mkg", "rmgroup", "rmg", "rengroup", "reng":
+		if argIdx == 0 {
+			return m.groupNameCandidates()
+		}
+	case "method", "m":
+		if argIdx == 0 {
+			return model.Methods, "method", ""
+		}
+	case "loadtest", "lt", "loadedit", "ltedit", "loadeditor", "lteditor":
+		if argIdx == 0 {
+			return m.profileNameCandidates()
+		}
+	case "loadnew", "ltnew":
+		if argIdx == 1 { // the optional template profile
+			return m.profileNameCandidates()
+		}
+	case "import":
+		if argIdx == 0 {
+			return []string{"curl"}, "import source", ""
+		}
+	}
+	return nil, "", ""
+}
+
+// savedNameCandidates lists saved request names, plus group names with a
+// trailing slash so completion can descend into them.
+func (m Model) savedNameCandidates() ([]string, string, string) {
+	items, err := m.collectionStore.List()
+	if err != nil {
+		return nil, "", "collections unavailable: " + err.Error()
+	}
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.IsDir {
+			names = append(names, it.Name+"/")
+		} else {
+			names = append(names, it.Name)
+		}
+	}
+	return names, "saved request", ""
+}
+
+func (m Model) groupNameCandidates() ([]string, string, string) {
+	items, err := m.collectionStore.List()
+	if err != nil {
+		return nil, "", "collections unavailable: " + err.Error()
+	}
+	var names []string
+	for _, it := range items {
+		if it.IsDir {
+			names = append(names, it.Name)
+		}
+	}
+	return names, "group", ""
+}
+
+func (m Model) profileNameCandidates() ([]string, string, string) {
 	if err := m.loadStore.EnsureDefaults(); err != nil {
-		m.statusMsg = "load profiles unavailable: " + err.Error()
-		return m
+		return nil, "", "load profiles unavailable: " + err.Error()
 	}
 	profiles, err := m.loadStore.List()
 	if err != nil {
-		m.statusMsg = "load profiles unavailable: " + err.Error()
-		return m
+		return nil, "", "load profiles unavailable: " + err.Error()
 	}
-	matches := make([]string, 0, len(profiles))
+	names := make([]string, 0, len(profiles))
 	for _, p := range profiles {
-		if strings.HasPrefix(p.Name, prefix) {
-			matches = append(matches, p.Name)
-		}
+		names = append(names, p.Name)
 	}
-	if len(matches) == 0 {
-		m.statusMsg = "no load profile matching " + prefix
-		return m
-	}
-	completed := matches[0]
-	if len(matches) > 1 {
-		completed = commonPrefix(matches)
-		m.statusMsg = "profiles: " + strings.Join(matches, " · ")
-	}
-	m.cmd.SetValue(verb + " " + completed)
-	m.cmd.CursorEnd()
-	return m
+	return names, "load profile", ""
 }
 
 func commonPrefix(values []string) string {
@@ -388,6 +520,12 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.editLoadProfileByName(fields[1])
+	case "loadeditor", "lteditor":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :loadeditor <profile>"
+			return m, nil
+		}
+		return m.editLoadProfileJSONByName(fields[1])
 	case "loadtest", "lt":
 		if len(fields) < 2 {
 			return m.openLoadPicker()

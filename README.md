@@ -175,10 +175,11 @@ p50/p95/p99/max latency, and target + achieved charts.
 
 | Key / command | Action |
 |---------------|--------|
-| `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `e` edit · `n` new · `esc` cancel) |
+| `TEST` button · `:loadtest` | open the profile picker (`j/k` · `⏎` run · `e` edit shape · `E` edit JSON · `n` new · `esc` cancel) |
 | `:loadtest <name>` / `:lt <name>` | run a named profile directly |
 | `:loadnew <name> [template]` | create your own shape in the shape editor, starting from a template profile |
-| `:loadedit <name>` | reshape a saved profile in the shape editor (`Tab` completes profile names) |
+| `:loadedit <name>` | reshape a saved profile in the shape editor |
+| `:loadeditor <name>` | edit a profile's raw JSON in `$VISUAL` / `$EDITOR` |
 | `esc` | stop a running test (in-flight requests are cancelled) |
 | `esc` / `T` on the results | close the results / run the same profile again |
 
@@ -196,7 +197,11 @@ leaves — asking first if you have unsaved changes.
 
 The `:` command line keeps an in-memory history for the session: `↑`/`↓` walk
 older/newer commands and restore the command you were drafting when you return
-to the newest entry.
+to the newest entry. `Tab` completes as you type: command names first, then
+each command's arguments — saved request and group names (a group completes to
+`group/` and a second `Tab` descends into it), load profile names, and HTTP
+methods. A unique match is inserted; an ambiguous one extends to the shared
+prefix and lists the candidates in the status bar.
 
 Profiles are plain JSON in `loadprofiles/` beside your collections; the five
 default shapes (constant, ramp-up, spike, step, sawtooth) are written there on

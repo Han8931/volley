@@ -57,6 +57,9 @@ func (m Model) viewCommandLine() string {
 	if ghost := m.commandGhost(); ghost != "" {
 		line += lipgloss.NewStyle().Foreground(colDim).Italic(true).Render(ghost)
 	}
+	if m.cmdHint != "" {
+		line += lipgloss.NewStyle().Foreground(colDim).Render("   " + m.cmdHint)
+	}
 	return lipgloss.NewStyle().Width(m.width).Render(line)
 }
 

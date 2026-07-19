@@ -101,7 +101,7 @@ func (m Model) openLoadPicker() (tea.Model, tea.Cmd) {
 	if m.pickerIdx >= len(items) {
 		m.pickerIdx = 0
 	}
-	m.statusMsg = "load profile: j/k choose · ⏎ run · e edit · n new · esc cancel"
+	m.statusMsg = "load profile: j/k choose · ⏎ run · e edit · E $EDITOR · n new · esc cancel"
 	return m, nil
 }
 
@@ -124,6 +124,12 @@ func (m Model) updateLoadPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Reshape the highlighted profile in the dedicated editing mode.
 		p := m.pickerItems[m.pickerIdx]
 		return m.openShapeEditor(p.Name, p), nil
+	case "E":
+		// The highlighted profile's raw JSON in $EDITOR — exact values without
+		// entering the shape editor first. The picker stays armed: the editor
+		// round-trip reopens it on the saved profile.
+		p := m.pickerItems[m.pickerIdx]
+		return m.editLoadProfile(p.Name, p)
 	case "n":
 		// Hand off to :loadnew with the command line prefilled.
 		m.loadPicker = false
@@ -193,6 +199,25 @@ func (m Model) editLoadProfileByName(name string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.openShapeEditor(name, p), nil
+}
+
+// editLoadProfileJSONByName starts :loadeditor — the stored profile's raw
+// JSON opened directly in $VISUAL / $EDITOR, skipping the shape editor.
+func (m Model) editLoadProfileJSONByName(name string) (tea.Model, tea.Cmd) {
+	if err := m.loadStore.EnsureDefaults(); err != nil {
+		m.statusMsg = "load profiles unavailable: " + err.Error()
+		return m, nil
+	}
+	if m.loadRunning() {
+		m.statusMsg = "load test already running — esc to stop it first"
+		return m, nil
+	}
+	p, err := m.loadStore.Load(name)
+	if err != nil {
+		m.statusMsg = "no load profile named " + name
+		return m, nil
+	}
+	return m.editLoadProfile(name, p)
 }
 
 // editLoadProfile writes p to a temp file and opens it in $EDITOR; the result
@@ -503,7 +528,7 @@ func (m Model) viewLoadPicker() string {
 		dim(fmt.Sprintf("peak %.0f rps · %s · %d req total",
 			p.Peak(), formatRunDuration(p.Duration()), p.PlannedRequests())),
 		"",
-		dim("⏎ run against the current request · e edit shape · n new · esc cancel"),
+		dim("⏎ run against the current request · e edit shape · E edit JSON · n new · esc cancel"),
 	)
 	return strings.Join(lines, "\n")
 }

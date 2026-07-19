@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/loadtest"
 	"github.com/tabularasa/volley/internal/model"
 )
@@ -280,8 +281,113 @@ func TestLoadEditTabCompletion(t *testing.T) {
 	if got := m.cmd.Value(); got != "loadedit spike-" {
 		t.Errorf("common-prefix completion = %q, want %q", got, "loadedit spike-")
 	}
-	if !strings.Contains(m.statusMsg, "spike-fast") || !strings.Contains(m.statusMsg, "spike-slow") {
-		t.Errorf("ambiguous completion should list matches, status = %q", m.statusMsg)
+	if !strings.Contains(m.cmdHint, "spike-fast") || !strings.Contains(m.cmdHint, "spike-slow") {
+		t.Errorf("ambiguous completion should list matches, hint = %q", m.cmdHint)
+	}
+}
+
+func TestCommandVerbTabCompletion(t *testing.T) {
+	m := sized()
+	m = m.openCommandLineWith(':', "sen")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "send " {
+		t.Errorf("unique verb completion = %q, want %q", got, "send ")
+	}
+
+	m = m.openCommandLineWith(':', "loade")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "loadedit" {
+		t.Errorf("ambiguous verb completion = %q, want %q", got, "loadedit")
+	}
+	if !strings.Contains(m.cmdHint, "loadedit") || !strings.Contains(m.cmdHint, "loadeditor") {
+		t.Errorf("ambiguous verb completion should list matches, hint = %q", m.cmdHint)
+	}
+}
+
+func TestSavedRequestTabCompletion(t *testing.T) {
+	m := sized()
+	m.collectionStore = collections.Store{Root: t.TempDir()}
+	for _, name := range []string{"auth/login", "auth/logout", "ping"} {
+		if err := m.collectionStore.Save(name, model.NewRequest()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m = m.openCommandLineWith(':', "open p")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "open ping" {
+		t.Errorf("request completion = %q, want %q", got, "open ping")
+	}
+
+	// A group completes with a trailing slash, and another Tab descends into it
+	// instead of stalling on the group name itself.
+	m = m.openCommandLineWith(':', "open au")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "open auth/" {
+		t.Errorf("group completion = %q, want %q", got, "open auth/")
+	}
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "open auth/log" {
+		t.Errorf("descend completion = %q, want %q", got, "open auth/log")
+	}
+	if !strings.Contains(m.cmdHint, "auth/login") || !strings.Contains(m.cmdHint, "auth/logout") {
+		t.Errorf("descend completion should list children, hint = %q", m.cmdHint)
+	}
+	// Typing any other key drops the stale candidate listing.
+	m = step(m, runes("i"))
+	if m.cmdHint != "" {
+		t.Errorf("hint should clear on typing, got %q", m.cmdHint)
+	}
+}
+
+func TestMethodTabCompletion(t *testing.T) {
+	m := sized()
+	m = m.openCommandLineWith(':', "method D")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "method DELETE" {
+		t.Errorf("method completion = %q, want %q", got, "method DELETE")
+	}
+}
+
+func TestTabCompletionIgnoresFreeTextArgs(t *testing.T) {
+	m := sized()
+	// ":set name=value" takes free text; Tab must leave it untouched.
+	m = m.openCommandLineWith(':', "set tok")
+	m = step(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cmd.Value(); got != "set tok" {
+		t.Errorf("free-text arg changed by Tab: %q", got)
+	}
+}
+
+func TestLoadEditorCommand(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+	m := sized()
+	m.loadStore.Root = t.TempDir()
+	if err := m.loadStore.Save("steady", loadtest.Constant(1, time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	next, cmd := m.executeCommand("loadeditor steady")
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal(":loadeditor without editor env should not spawn a command")
+	}
+	if !strings.Contains(m.statusMsg, "VISUAL") || !strings.Contains(m.statusMsg, "EDITOR") {
+		t.Fatalf("status = %q, want editor env hint", m.statusMsg)
+	}
+
+	next, _ = m.executeCommand("loadeditor nope")
+	m = next.(Model)
+	if !strings.Contains(m.statusMsg, "no load profile named nope") {
+		t.Fatalf("status = %q, want missing-profile error", m.statusMsg)
+	}
+
+	t.Setenv("VISUAL", "true")
+	next, cmd = m.executeCommand("loadeditor steady")
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatalf(":loadeditor with an editor should spawn it, status = %q", m.statusMsg)
 	}
 }
 
