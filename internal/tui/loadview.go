@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -548,8 +549,28 @@ func (m Model) viewLoadPicker() string {
 }
 
 // viewLoadRun renders the live (or final) run view in the response pane.
+// During an active drag-selection the styled view yields to the plain-text
+// grid with the selected span reversed, so the span math and the text that
+// lands on the clipboard agree exactly with what's on screen.
 func (m Model) viewLoadRun() string {
-	width := m.vp.Width
+	if m.selecting && m.selLoad {
+		return renderWithSelection(m.loadRunPlainText(), m.selAnchor, m.selCursor)
+	}
+	return m.viewLoadRunStyled()
+}
+
+// loadRunPlainText is the run view as an unstyled character grid — the source
+// for drag-selection and clipboard copies.
+func (m Model) loadRunPlainText() string {
+	return stripStyles(m.viewLoadRunStyled())
+}
+
+// loadRunHeader builds the run view's header row. On a finished run the copy
+// pill is right-aligned on the row; when it can't fit beside the full header
+// the elapsed/total clock is shed first, and the pill is dropped only if even
+// that is too wide. The bool reports whether the pill made it onto the row so
+// click hit-testing agrees with what's rendered.
+func (m Model) loadRunHeader(width int) (string, bool) {
 	p, snap := m.loadProfile, m.loadSnap
 
 	state := lipgloss.NewStyle().Foreground(colOK).Render("running")
@@ -559,51 +580,171 @@ func (m Model) viewLoadRun() string {
 	case snap.Done:
 		state = lipgloss.NewStyle().Foreground(colOK).Bold(true).Render("done")
 	}
+	base := title("LOAD TEST ") + lipgloss.NewStyle().Foreground(colFg).Bold(true).Render(p.Name) +
+		"  " + state
 	// The live elapsed clock is truncated to 100ms — raw time.Since output
 	// would flicker nanosecond noise ("2.000418958s") in the header.
-	head := title("LOAD TEST ") + lipgloss.NewStyle().Foreground(colFg).Bold(true).Render(p.Name) +
-		"  " + state +
-		dim(fmt.Sprintf("  %s / %s", formatRunDuration(snap.Elapsed.Truncate(100*time.Millisecond)),
-			formatRunDuration(p.Duration())))
-
-	okCount := snap.Completed - snap.Errors
-	counts := fmt.Sprintf(" ok %d · err %d · cancel %d · drop %d · in-flight %d",
-		okCount, snap.Errors, snap.Canceled, snap.Dropped, snap.InFlight)
-	countStyle := dim(counts)
-	if snap.Errors > 0 || snap.Dropped > 0 {
-		countStyle = lipgloss.NewStyle().Foreground(colMethod).Render(counts)
+	head := base + dim(fmt.Sprintf("  %s / %s", formatRunDuration(snap.Elapsed.Truncate(100*time.Millisecond)),
+		formatRunDuration(p.Duration())))
+	if !snap.Done || m.loadSummary == nil {
+		return head, false
 	}
-
-	rates := dim(fmt.Sprintf(" rps %.1f achieved · %.1f target now", snap.AchievedRPS, p.TargetAt(snap.Elapsed)))
-	lat := dim(fmt.Sprintf(" p50 %s · p95 %s · p99 %s · max %s",
-		snap.P50.Round(time.Millisecond), snap.P95.Round(time.Millisecond),
-		snap.P99.Round(time.Millisecond), snap.Max.Round(time.Millisecond)))
-
-	chartW := min(width-11, 60)
-	target := targetSeries(p)
-	achieved := achievedSeries(snap, len(target))
-	chart := []string{
-		dim(fmt.Sprintf("%-9s ", "target")) + dim(sparkline(target, chartW)),
-		dim(fmt.Sprintf("%-9s ", "achieved")) + keyHint(sparkline(achieved, chartW)),
+	pill := m.copyButtonView()
+	pillW := lipgloss.Width(pill)
+	if pad := width - lipgloss.Width(head) - pillW; pad > 0 {
+		return head + strings.Repeat(" ", pad) + pill, true
 	}
-
-	foot := dim("esc stop")
-	if snap.Done {
-		foot = dim("esc close · T run again")
+	if pad := width - lipgloss.Width(base) - pillW; pad > 0 {
+		return base + strings.Repeat(" ", pad) + pill, true
 	}
+	return head, false
+}
 
-	lines := []string{head, ""}
+func (m Model) viewLoadRunStyled() string {
+	width := m.vp.Width
+	p, snap := m.loadProfile, m.loadSnap
+	head, _ := m.loadRunHeader(width)
+
+	lines := []string{head}
+	if !snap.Done {
+		frac := 0.0
+		if total := p.Duration(); total > 0 {
+			frac = float64(snap.Elapsed) / float64(total)
+		}
+		lines = append(lines, " "+loadProgressBar(frac, min(width-8, 46)))
+	}
+	lines = append(lines, "")
+
 	if snap.Done && m.loadSummary != nil {
 		// The finished view swaps the live counters for the k6-style analysis.
 		lines = append(lines, styleSummary(*m.loadSummary)...)
 	} else {
-		lines = append(lines, countStyle, rates, lat)
+		lines = append(lines, m.viewLiveCounters(p, snap)...)
 	}
+
+	// Right-hand chart annotations get whatever the widest note actually
+	// needs — a clipped "max 3ms" would read as minutes. On panes too narrow
+	// to fit a useful sparkline beside them, the annotations are dropped.
+	notes := [3]string{
+		fmt.Sprintf("peak %.0f/s", p.Peak()),
+		fmt.Sprintf("%.1f/s avg", snap.AchievedRPS),
+		fmt.Sprintf("mean/s · max %s", snap.Max.Round(time.Millisecond)),
+	}
+	noteW := 0
+	for _, n := range notes {
+		noteW = max(noteW, lipgloss.Width(n)+2)
+	}
+	chartW := min(width-10-noteW, 48)
+	annotate := chartW >= 16
+	if !annotate {
+		chartW = min(width-11, 48)
+	}
+	target := targetSeries(p)
+	achieved := achievedSeries(snap, len(target))
+	latency := latencySeries(snap, len(target))
+	note := func(s string) string {
+		if !annotate {
+			return ""
+		}
+		return dim("  " + s)
+	}
+	latStyle := lipgloss.NewStyle().Foreground(colMethod)
+	chart := []string{
+		dim(fmt.Sprintf("%-9s ", "target")) + dim(sparkline(target, chartW)) + note(notes[0]),
+		dim(fmt.Sprintf("%-9s ", "achieved")) + keyHint(sparkline(achieved, chartW)) + note(notes[1]),
+		dim(fmt.Sprintf("%-9s ", "latency")) + latStyle.Render(sparkline(latency, chartW)) + note(notes[2]),
+	}
+
+	foot := dim("esc stop")
+	if snap.Done {
+		foot = dim("esc close · T rerun · y copy · drag selects text")
+	}
+
 	lines = append(lines, "")
 	lines = append(lines, chart...)
 	lines = append(lines, "", foot)
 	out := strings.Join(lines, "\n")
 	return lipgloss.NewStyle().MaxWidth(width).Render(out)
+}
+
+// viewLiveCounters is the in-flight stats block: dim labels, status-colored
+// values — green ok, red errors, amber drops — never color without its label.
+func (m Model) viewLiveCounters(p loadtest.Profile, snap loadtest.Snapshot) []string {
+	value := lipgloss.NewStyle().Foreground(colFg)
+	stat := func(label, v string, st lipgloss.Style) string { return dim(label+" ") + st.Render(v) }
+	zeroOr := func(n int, hot lipgloss.AdaptiveColor) lipgloss.Style {
+		if n > 0 {
+			return lipgloss.NewStyle().Foreground(hot)
+		}
+		return lipgloss.NewStyle().Foreground(colDim)
+	}
+
+	workers := p.MaxWorkers
+	if workers <= 0 {
+		workers = loadtest.DefaultMaxWorkers
+	}
+	counts := " " + stat("ok", fmt.Sprintf("%d", snap.Completed-snap.Errors), lipgloss.NewStyle().Foreground(colOK)) +
+		dim(" · ") + stat("err", fmt.Sprintf("%d", snap.Errors), zeroOr(snap.Errors, colErr)) +
+		dim(" · ") + stat("cancel", fmt.Sprintf("%d", snap.Canceled), lipgloss.NewStyle().Foreground(colDim)) +
+		dim(" · ") + stat("drop", fmt.Sprintf("%d", snap.Dropped), zeroOr(snap.Dropped, colMethod)) +
+		dim(" · ") + stat("in-flight", fmt.Sprintf("%d/%d", snap.InFlight, workers), value)
+
+	rates := " " + stat("rps", fmt.Sprintf("%.1f", snap.AchievedRPS), value) + dim(" achieved · ") +
+		value.Render(fmt.Sprintf("%.1f", p.TargetAt(snap.Elapsed))) + dim(" target now")
+
+	ms := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
+	lat := " " + stat("p50", ms(snap.P50), value) + dim(" · ") +
+		stat("p90", ms(snap.P90), value) + dim(" · ") +
+		stat("p95", ms(snap.P95), value) + dim(" · ") +
+		stat("p99", ms(snap.P99), value) + dim(" · ") +
+		stat("max", ms(snap.Max), value)
+
+	return []string{counts, rates, lat}
+}
+
+// loadProgressBar draws run progress as an accent-filled bar with a percent
+// readout. frac is clamped to [0, 1].
+func loadProgressBar(frac float64, width int) string {
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 1 {
+		frac = 1
+	}
+	if width < 8 {
+		width = 8
+	}
+	filled := int(frac*float64(width) + 0.5)
+	bar := lipgloss.NewStyle().Foreground(colAccent).Render(strings.Repeat("█", filled)) +
+		dim(strings.Repeat("░", width-filled))
+	return bar + dim(fmt.Sprintf(" %3.0f%%", frac*100))
+}
+
+// latencySeries is per-second mean latency in milliseconds, aligned with the
+// target/achieved series so the three sparklines share a time axis.
+func latencySeries(snap loadtest.Snapshot, secs int) []float64 {
+	if secs < len(snap.Buckets) {
+		secs = len(snap.Buckets)
+	}
+	out := make([]float64, secs)
+	for i, b := range snap.Buckets {
+		out[i] = float64(b.MeanLatency()) / float64(time.Millisecond)
+	}
+	return out
+}
+
+// yankLoadSummary copies the finished run's k6-style analysis to the
+// clipboard — the y key and the header copy pill both land here.
+func (m Model) yankLoadSummary() (tea.Model, tea.Cmd) {
+	if m.loadSummary == nil {
+		return m, nil
+	}
+	if err := clipboard.WriteAll(m.loadSummary.Render()); err != nil {
+		m.statusMsg = "clipboard unavailable"
+	} else {
+		m.statusMsg = "copied run analysis to clipboard"
+	}
+	return m, nil
 }
 
 // styleSummary colors the k6-style analysis block for the results view: the

@@ -30,9 +30,6 @@ func statusColor(code int) lipgloss.TerminalColor {
 	}
 }
 
-// colErr is the error/5xx red, adaptive like the rest of the palette.
-var colErr = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
-
 // renderStatusSummary is the response status + timing shown in the response
 // pane's header row. It fits within budget columns, shedding the size and then
 // the timing when the pane is too narrow to hold the full summary.

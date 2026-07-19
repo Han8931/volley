@@ -82,6 +82,7 @@ type Model struct {
 	chordState
 	inputState
 	loadState
+	envState
 }
 
 // editorState is the request currently being edited in the top bar + request
@@ -130,6 +131,7 @@ type responseState struct {
 type selectionState struct {
 	selecting  bool
 	selDragged bool
+	selLoad    bool // selection is over the load-run view, not the response body
 	selAnchor  textPos
 	selCursor  textPos
 }
@@ -251,6 +253,7 @@ func New() Model {
 			loadStore:   loadtest.DefaultStore(),
 			resultStore: loadtest.DefaultResultStore(),
 		},
+		envState: envState{envStore: vars.DefaultEnvStore()},
 	}
 	m = m.setFocus(focusCollection)
 	if listErr != nil {
@@ -392,6 +395,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case profileEditorFinishedMsg:
 		return m.applyProfileEditorResult(msg)
+
+	case envEditorFinishedMsg:
+		return m.applyEnvEditorResult(msg)
 
 	case loadTickMsg:
 		return m.handleLoadTick(msg)
@@ -539,6 +545,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.stopLoadTest() // dismisses the finished view
 		case msg.String() == "T" && m.focus == focusResponse:
 			return m.confirmLoadTest(m.loadProfile), nil
+		case msg.String() == "y" && m.focus == focusResponse:
+			return m.yankLoadSummary()
 		}
 	}
 
@@ -983,9 +991,73 @@ func (m Model) responseTextPos(x, y int) (textPos, bool) {
 	return textPos{line: line, col: col}, true
 }
 
+// loadTextPos maps a screen coordinate to a position in the load-run view's
+// plain-text grid. Unlike responseTextPos there is no tab/status header row
+// and no scroll offset: the view starts directly below the pane's top border.
+func (m Model) loadTextPos(x, y int) (textPos, bool) {
+	if !m.overResponsePane(x, y) {
+		return textPos{}, false
+	}
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	contentX := respX + 2 // pane border + left padding
+	topY := m.bodyTopY() + 1
+	if y < topY {
+		return textPos{}, false
+	}
+	col := x - contentX
+	if col < 0 {
+		col = 0
+	}
+	return textPos{line: y - topY, col: col}, true
+}
+
+// loadCopyPillClicked reports whether msg hit the copy pill on the finished
+// run view's header row — mirror of copyButtonClicked for the load view.
+func (m Model) loadCopyPillClicked(msg tea.MouseMsg) bool {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionRelease {
+		return false
+	}
+	if m.loadRun == nil || !m.loadSnap.Done || m.loadSummary == nil || m.loadPicker || m.shapeEdit {
+		return false
+	}
+	if _, shown := m.loadRunHeader(m.vp.Width); !shown {
+		return false // pane too narrow — the pill isn't on screen
+	}
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	respX := rightX + l.reqInnerW + borderOverhead + l.gap
+	contentX := respX + 2
+	buttonW := lipgloss.Width(m.copyButtonView())
+	buttonEndX := contentX + m.vp.Width - 1
+	buttonStartX := buttonEndX - buttonW + 1
+	buttonY := m.bodyTopY() + 1 // the run view's header row
+	return msg.Y == buttonY && msg.X >= buttonStartX && msg.X <= buttonEndX
+}
+
 // handleMouseDown begins a text selection when the press lands on the response
-// body. Elsewhere it is a no-op; the click resolves on release.
+// body or the load-run view. Elsewhere it is a no-op; the click resolves on
+// release.
 func (m Model) handleMouseDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.loadRun != nil && !m.loadPicker && !m.shapeEdit {
+		pos, ok := m.loadTextPos(msg.X, msg.Y)
+		if !ok {
+			return m, nil
+		}
+		m.selecting = true
+		m.selLoad = true
+		m.selDragged = false
+		m.selAnchor = pos
+		m.selCursor = pos
+		return m, nil
+	}
 	if !m.hasResp {
 		return m, nil
 	}
@@ -994,6 +1066,7 @@ func (m Model) handleMouseDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.selecting = true
+	m.selLoad = false
 	m.selDragged = false
 	m.selAnchor = pos
 	m.selCursor = pos
@@ -1002,6 +1075,15 @@ func (m Model) handleMouseDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseDrag extends the in-progress selection and repaints the highlight.
 func (m Model) handleMouseDrag(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.selLoad {
+		pos, ok := m.loadTextPos(msg.X, msg.Y)
+		if !ok {
+			return m, nil // dragged off the pane; keep the last extent
+		}
+		m.selCursor = pos
+		m.selDragged = true
+		return m, nil // viewLoadRun renders the highlight itself
+	}
 	pos, ok := m.responseTextPos(msg.X, msg.Y)
 	if !ok {
 		return m, nil // dragged off the body; keep the last extent
@@ -1019,11 +1101,19 @@ func (m Model) handleMouseUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleClick(msg)
 	}
 	m.selecting = false
-	m.vp.SetContent(m.currentResponseViewText()) // drop the selection highlight either way
+	fromLoad := m.selLoad
+	m.selLoad = false
+	if !fromLoad {
+		m.vp.SetContent(m.currentResponseViewText()) // drop the selection highlight either way
+	}
 	if !m.selDragged {
 		return m.handleClick(msg) // it was a click, not a drag
 	}
-	sel := selectedText(m.currentResponseText(), m.selAnchor, m.selCursor)
+	source := m.currentResponseText()
+	if fromLoad {
+		source = m.loadRunPlainText()
+	}
+	sel := selectedText(source, m.selAnchor, m.selCursor)
 	if sel == "" {
 		return m, nil
 	}
@@ -1115,6 +1205,9 @@ func (m Model) handleClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.pendingAction != pendingNone || m.confirmDelete != "" || m.confirmCloseTab ||
 		m.loadPicker || m.loadConfirm || m.shapeEdit {
 		return m, nil
+	}
+	if m.loadCopyPillClicked(msg) {
+		return m.yankLoadSummary()
 	}
 	if m.sendButtonClicked(msg) {
 		return m.send()

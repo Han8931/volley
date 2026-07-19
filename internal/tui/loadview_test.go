@@ -152,6 +152,55 @@ func TestLoadRunLifecycle(t *testing.T) {
 		t.Errorf("status should report the saved result, got %q", m.statusMsg)
 	}
 
+	// The finished view carries the copy pill and the latency sparkline row.
+	if !strings.Contains(view, "⧉ copy") || !strings.Contains(view, "latency") {
+		t.Errorf("finished view missing copy pill or latency chart:\n%s", view)
+	}
+
+	// Drag-selecting over the run view copies its plain text. Coordinates are
+	// derived from the layout the same way the handlers derive them.
+	l := m.computeLayout()
+	rightX := 0
+	if m.collectionShown {
+		rightX = l.collectionInnerW + borderOverhead + l.gap
+	}
+	contentX := rightX + l.reqInnerW + borderOverhead + l.gap + 2
+	topY := m.bodyTopY() + 1
+	press := tea.MouseMsg{X: contentX + 2, Y: topY + 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	next, _ = m.handleMouseDown(press)
+	m = next.(Model)
+	if !m.selecting || !m.selLoad {
+		t.Fatal("mouse down over the run view should begin a load selection")
+	}
+	drag := press
+	drag.X += 20
+	drag.Action = tea.MouseActionMotion
+	next, _ = m.handleMouseDrag(drag)
+	m = next.(Model)
+	if !m.selDragged {
+		t.Fatal("drag should extend the load selection")
+	}
+	if sel := stripANSI(m.View()); !strings.Contains(sel, "LOAD TEST") {
+		t.Errorf("mid-drag view lost its content:\n%s", sel)
+	}
+	release := drag
+	release.Action = tea.MouseActionRelease
+	next, _ = m.handleMouseUp(release)
+	m = next.(Model)
+	if m.selecting || m.selLoad {
+		t.Error("mouse up should end the load selection")
+	}
+	if !strings.Contains(m.statusMsg, "copied") && !strings.Contains(m.statusMsg, "clipboard") {
+		t.Errorf("release after drag should attempt a copy, status = %q", m.statusMsg)
+	}
+
+	// y (and the pill) copy the analysis text.
+	next, _ = m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	if !strings.Contains(m.statusMsg, "analysis") && !strings.Contains(m.statusMsg, "clipboard") {
+		t.Errorf("y should copy the analysis, status = %q", m.statusMsg)
+	}
+
 	// esc dismisses the finished results and frees the response pane.
 	next, _ = m.updateNormal(keyEsc)
 	m = next.(Model)
@@ -166,6 +215,30 @@ func TestStaleLoadTickIgnored(t *testing.T) {
 	next, cmd := m.handleLoadTick(loadTickMsg{seq: 2})
 	if cmd != nil || next.(Model).loadSnap.Completed != 0 {
 		t.Error("a stale tick must be ignored and not reschedule")
+	}
+}
+
+func TestLoadProgressBar(t *testing.T) {
+	bar := stripANSI(loadProgressBar(0.5, 10))
+	if !strings.Contains(bar, "█████░░░░░") || !strings.Contains(bar, "50%") {
+		t.Errorf("half bar = %q", bar)
+	}
+	if got := stripANSI(loadProgressBar(-1, 10)); !strings.Contains(got, "░░░░░░░░░░") || !strings.Contains(got, "0%") {
+		t.Errorf("clamped low = %q", got)
+	}
+	if got := stripANSI(loadProgressBar(2, 10)); !strings.Contains(got, "██████████") || !strings.Contains(got, "100%") {
+		t.Errorf("clamped high = %q", got)
+	}
+}
+
+func TestLatencySeries(t *testing.T) {
+	snap := loadtest.Snapshot{Buckets: []loadtest.Bucket{
+		{Completed: 2, SumLatency: 40 * time.Millisecond},
+		{},
+	}}
+	got := latencySeries(snap, 4)
+	if len(got) != 4 || got[0] != 20 || got[1] != 0 {
+		t.Errorf("latencySeries = %v", got)
 	}
 }
 

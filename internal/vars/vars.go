@@ -25,17 +25,39 @@ func (s Store) Set(name, value string) { s[name] = value }
 // Expand replaces every {{name}} in text. Resolution order: the store, then
 // the process environment. Unknown placeholders are left untouched so the
 // user can see what failed to resolve.
-func (s Store) Expand(text string) string {
+func (s Store) Expand(text string) string { return Layered{s}.Expand(text) }
+
+// Layered resolves placeholders through an ordered list of scopes — the first
+// scope that defines a name wins (e.g. session :set overrides, then the active
+// environment) — with the process environment as the final fallback. Unknown
+// placeholders are left untouched, matching Store.Expand.
+type Layered []map[string]string
+
+// Expand replaces every {{name}} in text using the layered resolution order.
+func (l Layered) Expand(text string) string {
 	return placeholder.ReplaceAllStringFunc(text, func(match string) string {
 		name := placeholder.FindStringSubmatch(match)[1]
-		if v, ok := s[name]; ok {
-			return v
+		for _, scope := range l {
+			if v, ok := scope[name]; ok {
+				return v
+			}
 		}
 		if v, ok := os.LookupEnv(name); ok {
 			return v
 		}
 		return match
 	})
+}
+
+// Lookup reports the value name resolves to and whether any scope (or the
+// process environment) defines it.
+func (l Layered) Lookup(name string) (string, bool) {
+	for _, scope := range l {
+		if v, ok := scope[name]; ok {
+			return v, true
+		}
+	}
+	return os.LookupEnv(name)
 }
 
 // Unresolved returns the sorted, unique names of {{placeholders}} that remain
@@ -85,16 +107,21 @@ func Unresolved(req model.Request) []string {
 
 // Apply returns a copy of req with placeholders expanded across the URL,
 // header names/values, query keys/values, and body.
-func (s Store) Apply(req model.Request) model.Request {
+func (s Store) Apply(req model.Request) model.Request { return Layered{s}.Apply(req) }
+
+// Apply returns a copy of req with placeholders expanded across the URL,
+// header names/values, query keys/values, and body, using the layered
+// resolution order.
+func (l Layered) Apply(req model.Request) model.Request {
 	out := req
-	out.URL = s.Expand(req.URL)
-	out.Body = s.Expand(req.Body)
+	out.URL = l.Expand(req.URL)
+	out.Body = l.Expand(req.Body)
 
 	out.Headers = make([]model.Header, len(req.Headers))
 	for i, h := range req.Headers {
 		out.Headers[i] = model.Header{
-			Name:    s.Expand(h.Name),
-			Value:   s.Expand(h.Value),
+			Name:    l.Expand(h.Name),
+			Value:   l.Expand(h.Value),
 			Enabled: h.Enabled,
 		}
 	}
@@ -102,17 +129,17 @@ func (s Store) Apply(req model.Request) model.Request {
 	out.Query = make([]model.KV, len(req.Query))
 	for i, kv := range req.Query {
 		out.Query[i] = model.KV{
-			Key:     s.Expand(kv.Key),
-			Value:   s.Expand(kv.Value),
+			Key:     l.Expand(kv.Key),
+			Value:   l.Expand(kv.Value),
 			Enabled: kv.Enabled,
 		}
 	}
 
 	out.Auth = req.Auth
-	out.Auth.Token = s.Expand(req.Auth.Token)
-	out.Auth.Username = s.Expand(req.Auth.Username)
-	out.Auth.Password = s.Expand(req.Auth.Password)
-	out.Auth.Key = s.Expand(req.Auth.Key)
-	out.Auth.Value = s.Expand(req.Auth.Value)
+	out.Auth.Token = l.Expand(req.Auth.Token)
+	out.Auth.Username = l.Expand(req.Auth.Username)
+	out.Auth.Password = l.Expand(req.Auth.Password)
+	out.Auth.Key = l.Expand(req.Auth.Key)
+	out.Auth.Value = l.Expand(req.Auth.Value)
 	return out
 }

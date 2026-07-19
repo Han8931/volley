@@ -165,10 +165,11 @@ func (m Model) nextCommand() Model {
 // spelling of each command. Aliases (:e, :lt, :tabc, …) still execute; they
 // just aren't offered, to keep ambiguous listings readable.
 var commandVerbs = []string{
-	"copy", "delete", "editor", "help", "import", "loadedit", "loadeditor",
-	"loadnew", "loadtest", "ls", "method", "mkgroup", "new", "open", "quit",
-	"rename", "rengroup", "rmgroup", "save", "send", "set", "tabclose",
-	"tabnew", "tabnext", "tabonly", "tabprevious", "timeout", "wq",
+	"copy", "delete", "editor", "env", "envedit", "envnew", "envrm", "help",
+	"import", "loadedit", "loadeditor", "loadnew", "loadtest", "ls", "method",
+	"mkgroup", "new", "open", "quit", "rename", "rengroup", "rmgroup", "save",
+	"send", "set", "tabclose", "tabnew", "tabnext", "tabonly", "tabprevious",
+	"timeout", "wq",
 }
 
 // completeCommand implements Tab completion for the ":" command line: the
@@ -280,6 +281,15 @@ func (m Model) argCandidates(verb string, argIdx int) (candidates []string, what
 	case "import":
 		if argIdx == 0 {
 			return []string{"curl"}, "import source", ""
+		}
+	case "env":
+		if argIdx == 0 {
+			names, what, errMsg := m.envNameCandidates()
+			return append(names, "off"), what, errMsg
+		}
+	case "envedit", "envrm":
+		if argIdx == 0 {
+			return m.envNameCandidates()
 		}
 	}
 	return nil, "", ""
@@ -487,6 +497,29 @@ func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
 		}
 	case "set":
 		m.setVariable(input)
+	case "env":
+		if len(fields) < 2 {
+			return m.listEnvs()
+		}
+		return m.switchEnv(fields[1])
+	case "envnew":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :envnew <name>"
+			return m, nil
+		}
+		return m.newEnv(fields[1])
+	case "envedit":
+		name := ""
+		if len(fields) > 1 {
+			name = fields[1]
+		}
+		return m.editEnvByName(name)
+	case "envrm":
+		if len(fields) < 2 {
+			m.statusMsg = "usage: :envrm <name>"
+			return m, nil
+		}
+		return m.removeEnv(fields[1])
 	case "timeout":
 		if len(fields) > 1 {
 			d, err := time.ParseDuration(fields[1])
@@ -1170,9 +1203,14 @@ func (m *Model) refreshCollections() {
 	m.collectionPane.SetItems(items)
 }
 
-// setVariable handles ":set name=value" (value may contain spaces).
+// setVariable handles ":set name=value" (value may contain spaces); bare
+// ":set" lists the names the resolver currently knows.
 func (m *Model) setVariable(input string) {
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), "set"))
+	if rest == "" {
+		m.listVars()
+		return
+	}
 	name, value, ok := strings.Cut(rest, "=")
 	name = strings.TrimSpace(name)
 	if !ok || name == "" {

@@ -30,7 +30,7 @@ func (m Model) rawRequest() model.Request {
 // buildRequest merges the URL bar and request pane into one Request, then
 // expands {{variables}} and folds query params into the URL.
 func (m Model) buildRequest() model.Request {
-	req := m.vars.Apply(m.rawRequest())
+	req := m.resolver().Apply(m.rawRequest())
 	req = req.ApplyAuth() // turn the auth helper into a header/query param
 	req.URL = appendQuery(req.URL, req.Query)
 	return req

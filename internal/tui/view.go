@@ -2,10 +2,18 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// ansiSGR matches the styling escape sequences lipgloss emits.
+var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// stripStyles removes styling escapes, leaving the plain character grid — the
+// text a mouse selection over a styled view actually covers.
+func stripStyles(s string) string { return ansiSGR.ReplaceAllString(s, "") }
 
 // Palette — kept small and named so theming is a later, central change. Every
 // color is adaptive so the UI stays legible on light terminals too.
@@ -15,6 +23,7 @@ var (
 	colFg     = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E5E5"}
 	colOK     = lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"}
 	colMethod = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#F59E0B"}
+	colErr    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"} // failures only, never decoration
 	colSel    = lipgloss.AdaptiveColor{Light: "#E9E3F8", Dark: "#2A2440"}
 	colMarked = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#4B5563"} // multi-selected tree rows (ranger/lf-style block)
 	// colSelFg pairs with the colSel / colMarked backgrounds (white would vanish
@@ -529,18 +538,19 @@ func (m Model) viewStatusBar() string {
 	}
 
 	nameSeg := m.docNameSeg()
+	envSeg := m.envSeg()
 
 	hintStyle := lipgloss.NewStyle().Foreground(colDim)
 	if m.statusMsg != "" {
 		hintStyle = hintStyle.Foreground(colOK)
 	}
-	hintW := m.width - lipgloss.Width(modeTag) - lipgloss.Width(nameSeg)
+	hintW := m.width - lipgloss.Width(modeTag) - lipgloss.Width(nameSeg) - lipgloss.Width(envSeg)
 	if hintW < 0 {
 		hintW = 0
 	}
 	hint := hintStyle.Width(hintW).Render(truncateRunes(hints, hintW))
 
-	bar := lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, hint)
+	bar := lipgloss.JoinHorizontal(lipgloss.Left, modeTag, nameSeg, envSeg, hint)
 	// Clamp so a long name on a very narrow terminal can't overflow the row.
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(bar)
 }
@@ -565,6 +575,16 @@ func (m Model) docNameSeg() string {
 		seg += lipgloss.NewStyle().Foreground(colMethod).Bold(true).Render(" [+]")
 	}
 	return seg + "  "
+}
+
+// envSeg is the active-environment chip in the status bar — empty when no
+// environment is active, so the quiet default costs no columns.
+func (m Model) envSeg() string {
+	if m.envName == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(colAccent).
+		Render("(" + truncateMiddle(m.envName, docNameMaxW) + ")  ")
 }
 
 // truncateMiddle shortens s to at most max runes, keeping the head and tail
