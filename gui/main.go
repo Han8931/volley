@@ -29,6 +29,11 @@ func main() {
 		Title:  "Volley",
 		Width:  1180,
 		Height: 780,
+		// The workspace is side-by-side by design; below this the panes stop
+		// being usable, so the window refuses to get smaller rather than
+		// pretending to support a phone-width layout.
+		MinWidth:  960,
+		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

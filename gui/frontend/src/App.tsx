@@ -16,13 +16,29 @@ import {
 } from "./api";
 import { appConfirm, appPrompt, DialogHost } from "./dialogs";
 import { CodeArea, Highlighted } from "./highlight";
-import LoadPanel from "./LoadPanel";
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconClose,
+  IconCode,
+  IconCopy,
+  IconFolder,
+  IconGear,
+  IconPencil,
+  IconPlus,
+  IconRefresh,
+  IconSync,
+  IconTrash,
+} from "./icons";
+import LoadWorkspace from "./LoadWorkspace";
 import SettingsPanel from "./SettingsPanel";
 import { useAppearance } from "./appearance";
 import { Modal } from "./ui";
 
 type ReqTab = "headers" | "query" | "body" | "auth";
-type Panel = "" | "load" | "curl-import" | "settings" | "code";
+type Panel = "" | "curl-import" | "settings" | "code";
+// The app has two destinations; load testing is no longer a dialog.
+type Workspace = "request" | "load";
 
 // Layout preferences survive restarts (px for the sidebar, fraction of the
 // column for the request editor).
@@ -64,6 +80,7 @@ export default function App() {
   const [env, setEnv] = useState<EnvState>({ active: "", names: [] });
   const [note, setNote] = useState("");
   const [panel, setPanel] = useState<Panel>("");
+  const [workspace, setWorkspace] = useState<Workspace>("request");
   const [curlText, setCurlText] = useState("");
   // Which Settings section to open on (the gear lands on Appearance; other
   // entry points deep-link, e.g. an unconfigured Sync).
@@ -89,7 +106,6 @@ export default function App() {
   const current = activeTab.name;
   const resp = activeTab.resp;
   const sending = sendingId === activeTab.id;
-  const dirty = useMemo(() => tabDirty(activeTab), [activeTab]);
 
   const patchTab = (i: number, p: Partial<OpenTab>) =>
     setTabs((ts) => ts.map((t, j) => (j === i ? { ...t, ...p } : t)));
@@ -200,7 +216,7 @@ export default function App() {
   // browsable on their own. The URL is only required to actually fire a run.
   const openLoadPanel = async () => {
     setTargetUrl(await api.BuiltURL(req).catch(() => req.url));
-    setPanel("load");
+    setWorkspace("load");
   };
 
   const importCurl = async () => {
@@ -367,13 +383,13 @@ export default function App() {
             strip's +, so it isn't repeated here. */}
         <div className="tree-toolbar" role="toolbar" aria-label="collection actions">
           <button onClick={newGroup} title="new group (folder)">
-            <span aria-hidden="true">+</span> Group
+            <IconFolder /> Group
           </button>
           <button onClick={refreshTree} title="reload collections from disk">
-            <span aria-hidden="true">⟳</span> Reload
+            <IconRefresh /> Reload
           </button>
           <button onClick={syncNow} title="commit and push collections to your git remote">
-            <span aria-hidden="true">⇅</span> Sync
+            <IconSync /> Sync
           </button>
         </div>
         <div className="tree">
@@ -406,11 +422,11 @@ export default function App() {
                 )}
                 <span className="tree-actions">
                   <button title={`rename ${it.name}`} aria-label={`rename ${it.name}`} onClick={() => renameItem(it)}>
-                    ✎
+                    <IconPencil />
                   </button>
                   {!it.isDir && (
                     <button title={`copy ${it.name}`} aria-label={`copy ${it.name}`} onClick={() => copyItem(it)}>
-                      ⧉
+                      <IconCopy />
                     </button>
                   )}
                   <button
@@ -419,13 +435,23 @@ export default function App() {
                     className="danger"
                     onClick={() => deleteItem(it)}
                   >
-                    ✕
+                    <IconTrash />
                   </button>
                 </span>
               </div>
             );
           })}
-          {tree.length === 0 && <div className="empty">no saved requests</div>}
+          {tree.length === 0 && (
+            <div className="empty">
+              <p>No saved requests yet.</p>
+              <button className="mini" onClick={newRequest}>
+                Create request
+              </button>
+              <button className="mini" onClick={() => setPanel("curl-import")}>
+                Import curl
+              </button>
+            </div>
+          )}
         </div>
         </aside>
       )}
@@ -439,7 +465,7 @@ export default function App() {
           aria-label={treeFolded ? "show collections" : "hide collections"}
           aria-expanded={!treeFolded}
         >
-          <span aria-hidden="true">{treeFolded ? "›" : "‹"}</span>
+          {treeFolded ? <IconChevronRight /> : <IconChevronLeft />}
         </button>
       </div>
 
@@ -504,12 +530,12 @@ export default function App() {
                 aria-label={`close ${t.name || "draft"} tab`}
                 onClick={() => closeTab(i)}
               >
-                ×
+                <IconClose size={13} />
               </button>
             </div>
           ))}
           <button className="rtab-new" onClick={newRequest} aria-label="new request tab" title="new request">
-            +
+            <IconPlus />
           </button>
         </div>
           <select
@@ -532,7 +558,7 @@ export default function App() {
             aria-label="Open settings"
             title="Settings"
           >
-            <SettingsIcon />
+            <IconGear size={17} />
           </button>
         </div>
 
@@ -560,13 +586,22 @@ export default function App() {
             onChange={(ms) => setReq({ ...req, timeoutMs: ms })}
             onBad={() => setNote("bad duration — try 500ms, 10s, 2m")}
           />
-          <button className="codebtn" onClick={() => setPanel("code")} title="generate code (curl · wget · httpie)">
-            {"</>"}
+          <button
+            className="codebtn"
+            onClick={() => setPanel("code")}
+            aria-label="generate code"
+            title="generate code (curl · wget · httpie)"
+          >
+            <IconCode />
           </button>
           <button className="send" onClick={send} disabled={sending}>
             {sending ? "Sending…" : "Send"}
           </button>
-          <button className="test" onClick={openLoadPanel}>
+          <button
+            className={"test" + (workspace === "load" ? " active" : "")}
+            onClick={() => (workspace === "load" ? setWorkspace("request") : openLoadPanel())}
+            title="load testing: profiles, live run, results"
+          >
             Load test
           </button>
           <button className="save" onClick={save} title={current ? `save ${current}` : "save as"}>
@@ -574,6 +609,14 @@ export default function App() {
           </button>
         </div>
 
+        {workspace === "load" ? (
+          <LoadWorkspace
+            req={req}
+            targetUrl={targetUrl}
+            onClose={() => setWorkspace("request")}
+            onNote={setNote}
+          />
+        ) : (
         <div className="workrow" ref={workRowRef}>
           <div className="req-col" style={{ flex: `0 0 ${editorFrac * 100}%` }}>
             <div className="tabs" role="tablist">
@@ -588,13 +631,9 @@ export default function App() {
                   {t}
                 </button>
               ))}
-              <button className="curlbtn" onClick={() => setPanel("curl-import")}>
-                import curl
+              <button className="curlbtn" onClick={() => setPanel("curl-import")} title="replace this request from a curl command">
+                Import curl
               </button>
-              <div className="doc">
-                {current || "[No Name]"}
-                {dirty && <span className="dirty"> ●</span>}
-              </div>
             </div>
 
             <section className="editor">
@@ -653,6 +692,7 @@ export default function App() {
 
           <ResponsePane resp={resp} sending={sending} onNote={setNote} />
         </div>
+        )}
         {note && (
           <div className="note" role="status">
             {note}
@@ -661,9 +701,6 @@ export default function App() {
       </main>
 
       {panel === "code" && <CodeModal req={req} onClose={() => setPanel("")} onNote={setNote} />}
-      {panel === "load" && (
-        <LoadPanel req={req} targetUrl={targetUrl} onClose={() => setPanel("")} onNote={setNote} />
-      )}
       {panel === "settings" && (
         <SettingsPanel
           appearance={appearance}
@@ -700,14 +737,6 @@ export default function App() {
   );
 }
 
-function SettingsIcon() {
-  return (
-    <svg className="settings-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
-      <path d="m19.2 13.5 1.3 1-.2 1.2-1.6.5a7.7 7.7 0 0 1-1.2 1.4l.3 1.7-1 .7-1.5-.8a7.8 7.8 0 0 1-1.8.6l-.8 1.5h-1.3l-.8-1.5a7.8 7.8 0 0 1-1.8-.6l-1.5.8-1-.7.3-1.7a7.7 7.7 0 0 1-1.2-1.4l-1.6-.5-.2-1.2 1.3-1a7.8 7.8 0 0 1 0-1.9l-1.3-1 .2-1.2 1.6-.5a7.7 7.7 0 0 1 1.2-1.4l-.3-1.7 1-.7 1.5.8a7.8 7.8 0 0 1 1.8-.6l.8-1.5h1.3l.8 1.5a7.8 7.8 0 0 1 1.8.6l1.5-.8 1 .7-.3 1.7a7.7 7.7 0 0 1 1.2 1.4l1.6.5.2 1.2-1.3 1a7.8 7.8 0 0 1 0 1.9Z" />
-    </svg>
-  );
-}
 
 // CodeModal renders the built request as a runnable command — Bruno's
 // generate-code button. Format switch regenerates through the Go side so
@@ -759,7 +788,7 @@ function CodeModal({
                 .catch(() => onNote("clipboard unavailable"))
             }
           >
-            ⧉ copy
+            <IconCopy /> Copy
           </button>
           <button onClick={onClose}>close</button>
         </div>
@@ -833,7 +862,7 @@ function RowsEditor({
           aria-label={`add ${keyLabel.toLowerCase()}`}
           onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}
         >
-          +
+          <IconPlus size={14} />
         </button>
       </div>
       {rows.map((r, i) => (
@@ -847,7 +876,7 @@ function RowsEditor({
           <input className="k" placeholder={placeholderKey} value={r.key} onChange={(e) => set(i, { key: e.target.value })} />
           <input className="v" placeholder="value" value={r.value} onChange={(e) => set(i, { value: e.target.value })} />
           <button className="del" aria-label={`delete row ${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
-            ×
+            <IconClose size={14} />
           </button>
         </div>
       ))}
@@ -994,7 +1023,7 @@ function ResponsePane({
                 .catch(() => onNote("clipboard unavailable"));
             }}
           >
-            ⧉ copy
+            <IconCopy /> Copy
           </button>
         </span>
       </div>

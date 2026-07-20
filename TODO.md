@@ -1,6 +1,6 @@
 # Volley — Roadmap & UX Ideas
 
-_Last updated: 2026-07-20_
+_Last updated: 2026-07-20 (rev 2)_
 
 Ideas to grow Volley from a functional MVP into a tool that a Postman/Bruno user
 would happily switch to **in the terminal**. Each item notes **why** it matters
@@ -29,7 +29,7 @@ or two), **L** (multi-day).
 | OpenAPI import                  |   ✅    |  ✅   | ❌ |
 | Request history                 |   ✅    |  ⚠️   | ❌ |
 | Headless CLI runner (CI)        |  (Newman) | ✅ (`bru run`) | ❌ |
-| **Load testing**                |   ❌    |  ❌   | ✅ shipped (unique): shaped profiles, live charts, k6-style analysis, results browser |
+| **Load testing**                |   ❌    |  ❌   | ✅ shipped (unique): two executors (rate + concurrent users), shaped profiles, live charts, k6-style analysis, results browser |
 
 **Volley's wedge:** the only tool that is *Vim-native + git-friendly + an API
 client **and** a load tester* in one binary (terminal + desktop). The wedge is
@@ -82,9 +82,15 @@ These are the things whose absence makes a Postman user bounce.
         $EDITOR round-trip. **S.**
   - [ ] Collection/global variable scopes between environment and OS env. **M.**
 - [ ] **Front-end parity debt (TUI catch-up)** — the desktop app (Wails,
-      `gui/`, shipped 2026-07-19/20 with tabs, themes, graphical shape editor,
-      results browser) grew two features the TUI lacks. Keep the two front-ends
-      in lockstep — shared logic belongs in `internal/`. **Effort: M.**
+      `gui/`) has grown several features the TUI lacks. Keep the two
+      front-ends in lockstep — shared logic belongs in `internal/`. **M.**
+  - [ ] **Users-mode awareness (highest priority — a live inconsistency).**
+        The engine dispatches on `Profile.Mode`, so the TUI already *runs*
+        closed-loop profiles correctly, but every label still says rps: the
+        run view's "rps achieved · target now", the picker's "peak N rps",
+        and the shape editor can't set `mode` or `thinkTime` at all. A
+        profile built in the GUI therefore executes right and reads wrong.
+        **S–M.**
   - [ ] `:codegen curl|wget|httpie` — `internal/codegen` already exists; wire
         a command that copies to the clipboard (generalizes `:copy curl`). **S.**
   - [ ] `:sync` — extract `gui/sync.go` into `internal/gitsync` (config dir as
@@ -110,6 +116,26 @@ These are the things whose absence makes a Postman user bounce.
       flows are the #1 reason people script Postman; this makes them one line.
       **Effort: M.** _Pairs with Environments + Tests._
 
+## P0.5 — GUI design debt (from the 2026-07-20 design review, 8/10)
+
+Styling and palette are settled; what remains is information architecture.
+
+- [ ] **Promote Load Tests from a modal to a workspace.** One dialog now holds
+      profile selection, graphical shape editing, confirmation, live run,
+      charts, history and comparison — a second workspace wearing a dialog's
+      clothes, and the users executor made it denser still. Give it a
+      first-class destination with Profiles / Live run / Results views. **L.**
+- [ ] **One icon family.** The UI mixes a custom SVG gear with Unicode
+      glyphs (`⟳ ⇅ ✎ ⧉ ✕ </> ◉ ◡`). A single 16px outlined SVG set would do
+      more for the professional finish than any further spacing work. **M.**
+- [ ] **Calm the central chrome.** Three stacked horizontal layers (request
+      tabs, method/URL bar, Headers/Query/Body/Auth tabs). The duplicated
+      request name is gone; folding "Import curl" into a compact actions menu
+      is the remaining step. **S.**
+- [x] Results as metric cards with deltas, raw report behind a disclosure.
+- [x] Empty collection state offers create/import actions.
+- [x] A 960×600 minimum window instead of chasing narrow layouts.
+
 ## P1 — Differentiators & workflow speed
 
 Where a Vim TUI can feel *faster* than the GUIs.
@@ -131,8 +157,18 @@ Where a Vim TUI can feel *faster* than the GUIs.
   - [x] **Load-test comparison** — GUI results browser (history in the load
         panel): runs filterable by profile, p99 trend across runs, and a
         delta line vs the previous run of the same profile.
+  - [x] **Closed-loop "users" executor** (2026-07-20) — profiles carry a
+        `mode`: `""` keeps the open-loop rate model (target rps on a clock,
+        drops when the worker cap bites), `"users"` runs N concurrent virtual
+        users, each looping send → await response → think → repeat, so
+        throughput becomes an outcome and nothing is ever dropped. The
+        plotted shape means user count in that mode, so ramps/spikes/steps
+        work unchanged; `thinkTime` sets the per-user pause. GUI exposes
+        mode + think time in the shape editor with mode-aware previews,
+        counters and reports.
   - [ ] TUI equivalent: `:loadresults` / `:loadcompare` over the same
         `ResultStore` data. **M.**
+  - [ ] CSV export of a run, and an HTML artifact for CI. **S–M.**
   - **Why:** neither Postman nor Bruno does this; k6/vegeta aren't
         interactive. This is Volley's signature feature — shipped.
 - [x] **Numbered pane jump (` ,g`)** — EasyMotion-style focus hints over the
@@ -281,15 +317,19 @@ aren't re-litigated:
 _(curl, auth, environments, and the load-testing MVP from the original list
 have all shipped — in both front-ends where applicable.)_
 
-1. **TUI catch-up** (M) — `:codegen`, `:sync` (extract `internal/gitsync`),
+1. **TUI users-mode awareness** (S–M) — closes an inconsistency that exists
+   *today*: closed-loop profiles run correctly in the TUI but are labelled as
+   rps everywhere, and can't be created there.
+2. **TUI catch-up** (M) — `:codegen`, `:sync` (extract `internal/gitsync`),
    `:loadresults`/`:loadcompare`; keeps the two-front-end promise honest.
-2. **Session persistence** (S–M) — one state file for open tabs, tree state,
+3. **Load Tests workspace** (L) — the design review's top item, now overdue.
+4. **Session persistence** (S–M) — one state file for open tabs, tree state,
    and the active environment, shared by both apps.
-3. **Value extraction / chaining** (M) — turns Volley into a workflow tool;
+5. **Value extraction / chaining** (M) — turns Volley into a workflow tool;
    environments (its prerequisite) now exist.
-4. **Body types + auto Content-Type** (L) — the last "Postman user bounces"
+6. **Body types + auto Content-Type** (L) — the last "Postman user bounces"
    parity gap.
-5. **Request history** (M) — cheap now that the results browser set the
+7. **Request history** (M) — cheap now that the results browser set the
    pattern for browsing stored run data.
 
 > Rule of thumb: whatever ships next, ship it in **both front-ends** (logic in

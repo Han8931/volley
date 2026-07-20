@@ -4,7 +4,8 @@
 // analysis for the selected run.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, formatDuration, type RunResult } from "./api";
+import { api, formatDuration, unitFor, type RunResult } from "./api";
+import { IconCopy } from "./icons";
 import { appConfirm } from "./dialogs";
 import { LatencyChart } from "./ui";
 
@@ -136,7 +137,11 @@ export default function ResultsView({
         {current && (
           <div className="result-detail">
             {previous && <DeltaLine current={current} previous={previous} />}
-            <pre className="summary mono">{current.text}</pre>
+            <MetricCards r={current} previous={previous} />
+            <details className="raw-report">
+              <summary>View full report</summary>
+              <pre className="summary mono">{current.text}</pre>
+            </details>
             <div className="row-buttons">
               <button
                 className="mini"
@@ -147,7 +152,7 @@ export default function ResultsView({
                     .catch(() => onNote("clipboard unavailable"))
                 }
               >
-                ⧉ Copy
+                <IconCopy /> Copy
               </button>
               <button className="mini danger" onClick={() => remove(current)}>
                 Delete
@@ -161,6 +166,68 @@ export default function ResultsView({
         <button onClick={onBack}>Back</button>
       </div>
     </div>
+  );
+}
+
+// MetricCards front the numbers people actually scan for, so the run reads
+// as data rather than as a terminal transcript; the raw report stays one
+// disclosure away.
+function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
+  const delta = (cur: number, prev: number | undefined, downIsGood: boolean) => {
+    if (prev === undefined) return null;
+    const diff = cur - prev;
+    if (Math.abs(diff) < 0.05) return null;
+    const good = downIsGood ? diff < 0 : diff > 0;
+    return (
+      <span className={"card-delta " + (good ? "good" : "bad")}>
+        {diff > 0 ? "+" : ""}
+        {Math.abs(diff) >= 10 ? diff.toFixed(0) : diff.toFixed(1)}
+      </span>
+    );
+  };
+  const cards: { label: string; value: string; delta?: React.ReactNode; tone?: string }[] = [
+    {
+      label: "Throughput",
+      value: `${r.achievedRps.toFixed(1)} rps`,
+      delta: delta(r.achievedRps, previous?.achievedRps, false),
+    },
+    { label: "p50", value: `${r.p50Ms.toFixed(0)} ms`, delta: delta(r.p50Ms, previous?.p50Ms, true) },
+    { label: "p95", value: `${r.p95Ms.toFixed(0)} ms`, delta: delta(r.p95Ms, previous?.p95Ms, true) },
+    { label: "p99", value: `${r.p99Ms.toFixed(0)} ms`, delta: delta(r.p99Ms, previous?.p99Ms, true) },
+    {
+      label: "Failures",
+      value: `${r.errors} (${r.errorRate.toFixed(1)}%)`,
+      tone: r.errors > 0 ? "bad" : "good",
+      delta: delta(r.errorRate, previous?.errorRate, true),
+    },
+    {
+      label: r.mode === "users" ? "Peak users" : "Dropped",
+      value: r.mode === "users" ? `${r.peakRps.toFixed(0)}` : `${r.dropped}`,
+      tone: r.mode !== "users" && r.dropped > 0 ? "bad" : undefined,
+    },
+  ];
+  return (
+    <>
+      <div className="result-head">
+        <span className="mono">{r.method} {r.url}</span>
+        <span className="hint">
+          {formatDuration(r.elapsedMs)} · {r.completed} completed · peak {r.peakRps.toFixed(0)}{" "}
+          {unitFor(r.mode).short}
+          {r.stopped ? " · stopped early" : ""}
+        </span>
+      </div>
+      <div className="metric-cards">
+        {cards.map((c) => (
+          <div className="metric-card" key={c.label}>
+            <span className="card-label">{c.label}</span>
+            <span className={"card-value" + (c.tone ? " " + c.tone : "")}>
+              {c.value}
+              {c.delta}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

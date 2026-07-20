@@ -6,7 +6,9 @@
 // available behind a toggle for hand-tuning.
 
 import { useEffect, useRef, useState } from "react";
-import { api, formatDuration, parseDuration, type Profile, type ProfilePoint } from "./api";
+import { api, formatDuration, parseDuration, unitFor, type LoadMode, type Profile, type ProfilePoint } from "./api";
+import { appConfirm } from "./dialogs";
+import { IconReset } from "./icons";
 import { niceMax, ShapeChart } from "./ui";
 
 const CHART_W = 560;
@@ -30,10 +32,25 @@ export default function ShapeEditor({
   );
   const [sel, setSel] = useState(0);
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [mode, setMode] = useState<LoadMode>(initial?.mode ?? "");
+  const [thinkMs, setThinkMs] = useState(initial?.thinkTimeMs ?? 0);
+  const unit = unitFor(mode);
   const [maxRequests, setMaxRequests] = useState(initial?.maxRequests ?? 0);
   const [maxWorkers, setMaxWorkers] = useState(initial?.maxWorkers ?? 0);
   const [showJSON, setShowJSON] = useState(false);
   const [jsonText, setJSONText] = useState("");
+  // The shape the editor opened with — a saved profile's stored values, or
+  // the starting shape for a new one. Reset restores exactly this.
+  const baseline = useRef({
+    points: (initial?.points?.length
+      ? initial.points.map((p) => ({ ...p }))
+      : [{ atMs: 0, rps: 20 }, { atMs: 30000, rps: 20 }]) as ProfilePoint[],
+    description: initial?.description ?? "",
+    mode: (initial?.mode ?? "") as LoadMode,
+    thinkMs: initial?.thinkTimeMs ?? 0,
+    maxRequests: initial?.maxRequests ?? 0,
+    maxWorkers: initial?.maxWorkers ?? 0,
+  });
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragging = useRef<number | null>(null);
 
@@ -101,6 +118,31 @@ export default function ShapeEditor({
     setSel(Math.max(0, sel - 1));
   };
 
+  // Edited away from the opening shape? Reset has nothing to do otherwise.
+  const changed =
+    JSON.stringify({ points, description, mode, thinkMs, maxRequests, maxWorkers }) !==
+    JSON.stringify(baseline.current);
+
+  const reset = async () => {
+    const ok = await appConfirm("Reset this profile?", {
+      body: initial
+        ? "Discards your edits and restores the last saved shape."
+        : "Restores the shape this editor started from.",
+      danger: true,
+    });
+    if (!ok) return;
+    const b = baseline.current;
+    setPoints(b.points.map((p) => ({ ...p })));
+    setDescription(b.description);
+    setMode(b.mode);
+    setThinkMs(b.thinkMs);
+    setMaxRequests(b.maxRequests);
+    setMaxWorkers(b.maxWorkers);
+    setSel(0);
+    setShowJSON(false);
+    onNote(`reset ${name} to its ${initial ? "saved" : "starting"} shape`);
+  };
+
   const save = async () => {
     if (durationMs <= 0) {
       onNote("profile duration must be positive — move the last point right");
@@ -110,6 +152,8 @@ export default function ShapeEditor({
       await api.SaveProfile(name, {
         name,
         description,
+        mode,
+        thinkTimeMs: mode === "users" ? thinkMs : 0,
         points,
         maxRequests: maxRequests || undefined,
         maxWorkers: maxWorkers || undefined,
@@ -130,6 +174,7 @@ export default function ShapeEditor({
         {
           name,
           description,
+          ...(mode === "users" ? { mode, thinkTime: formatDuration(thinkMs) || "0s" } : {}),
           points: points.map((p) => ({ at: formatDuration(p.atMs) || "0s", rps: p.rps })),
           ...(maxRequests ? { maxRequests } : {}),
           ...(maxWorkers ? { maxWorkers } : {}),
@@ -145,6 +190,8 @@ export default function ShapeEditor({
     try {
       const parsed = JSON.parse(jsonText) as {
         description?: string;
+        mode?: LoadMode;
+        thinkTime?: string;
         points?: { at?: string; rps?: number }[];
         maxRequests?: number;
         maxWorkers?: number;
@@ -159,6 +206,8 @@ export default function ShapeEditor({
       ps[0] = { ...ps[0], atMs: 0 };
       setPoints(ps);
       setDescription(parsed.description ?? "");
+      setMode(parsed.mode === "users" ? "users" : "");
+      setThinkMs(parsed.thinkTime ? (parseDuration(parsed.thinkTime) ?? 0) : 0);
       setMaxRequests(parsed.maxRequests ?? 0);
       setMaxWorkers(parsed.maxWorkers ?? 0);
       setSel(0);
@@ -175,9 +224,24 @@ export default function ShapeEditor({
 
   return (
     <div className="shape-editor">
+      <div className="shape-head">
       <div className="p-meta">
-        <b>{name}</b> · peak {Math.max(...points.map((x) => x.rps))} rps · {formatDuration(durationMs) || "0s"} ·{" "}
-        up to {planned} req
+        <b>{name}</b> · peak {Math.max(...points.map((x) => x.rps))} {unit.short} ·{" "}
+        {formatDuration(durationMs) || "0s"}
+        {mode === "users"
+          ? thinkMs > 0
+            ? ` · ${formatDuration(thinkMs)} think time`
+            : " · no think time"
+          : ` · up to ${planned} req`}
+      </div>
+        <button
+          className="mini reset-btn"
+          onClick={reset}
+          disabled={!changed}
+          title={changed ? "restore the shape this editor opened with" : "no edits to undo"}
+        >
+          <IconReset size={14} /> Reset
+        </button>
       </div>
 
       <div
@@ -226,7 +290,7 @@ export default function ShapeEditor({
             />
           </label>
           <label>
-            rps
+            {unit.short}
             <input
               type="number"
               min={0}
@@ -241,6 +305,36 @@ export default function ShapeEditor({
           <button className="mini danger" onClick={deletePoint}>
             Delete point
           </button>
+        </fieldset>
+
+        <fieldset>
+          <legend>execution</legend>
+          <label>
+            mode
+            <select
+              className="mode-select"
+              value={mode}
+              title="rate: fire N requests/second regardless of latency. users: N concurrent users, each awaiting its response."
+              onChange={(e) => setMode(e.target.value as LoadMode)}
+            >
+              <option value="">Rate (requests/sec)</option>
+              <option value="users">Users (concurrent)</option>
+            </select>
+          </label>
+          {mode === "users" && (
+            <label>
+              think time
+              <input
+                className="mono"
+                value={formatDuration(thinkMs) || "0s"}
+                title="pause each user takes between its requests"
+                onChange={(e) => {
+                  const ms = parseDuration(e.target.value);
+                  if (ms !== null) setThinkMs(ms);
+                }}
+              />
+            </label>
+          )}
         </fieldset>
 
         <fieldset>

@@ -2794,3 +2794,249 @@ button.primary:hover {
 .tree-group.collapsed {
   color: var(--dim);
 }
+
+/* --- load-test results: metric cards ------------------------------------
+   The numbers people scan for lead; the raw k6 report stays behind a
+   disclosure so the view reads as data, not as a terminal transcript. */
+
+.result-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 2px;
+}
+
+.result-head .mono {
+  font-size: var(--mono-size);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.card-label {
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.card-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--fg);
+}
+
+.card-value.good { color: var(--ok); }
+.card-value.bad { color: var(--err); }
+
+.card-delta {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.card-delta.good { color: var(--ok); }
+.card-delta.bad { color: var(--err); }
+
+.raw-report > summary {
+  cursor: pointer;
+  color: var(--dim);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.raw-report > summary:hover {
+  color: var(--accent);
+}
+
+/* mode tag on load-profile rows */
+.mode-tag {
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mode-select {
+  width: auto;
+  min-width: 170px;
+}
+
+/* Empty collections: name the state, then offer the way out of it. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 16px 12px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+/* Disabled secondary/tertiary buttons: visibly inert, and not clickable. */
+.mini:disabled,
+.row-buttons button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mini:disabled:hover,
+.row-buttons button:disabled:hover {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--dim);
+}
+
+/* One icon family: inline, aligned to the text it sits with, never a
+   filled shape. Buttons that pair an icon with a label get a small gap. */
+.icon {
+  flex: 0 0 auto;
+  vertical-align: -0.18em;
+}
+
+.tree-toolbar button,
+.varsbtn,
+.resp-tools button,
+.row-buttons button,
+.mini,
+.add,
+.codebtn,
+.rtab-x,
+.rtab-new,
+.modal-x,
+.tree-actions button,
+.row .del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Shape editor header: what you're editing on the left, revert on the
+   right. Reset acts on the shape, so it sits with the shape — not in the
+   footer beside Save/Cancel, which commit or abandon the whole edit. */
+.shape-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shape-head .p-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.reset-btn {
+  flex: 0 0 auto;
+  border-color: transparent;
+}
+
+.reset-btn:not(:disabled):hover {
+  color: var(--warn);
+  border-color: var(--line);
+}
+
+/* --- load testing as a workspace ----------------------------------------
+   Was a modal holding profiles, editing, confirmation, a live run, charts,
+   history and comparison — i.e. a second workspace wearing dialog chrome. */
+
+.load-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 18px 18px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.load-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.load-nav {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.load-navitem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 8px;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.load-navitem:hover:not(:disabled) {
+  background: var(--panel-soft);
+  color: var(--fg);
+}
+
+.load-navitem.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.load-navitem:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* a run in flight pulses on its tab, so switching away stays honest */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% { opacity: 0.25; }
+}
+
+.test.active {
+  background: var(--warn);
+  color: var(--accent-contrast);
+}

@@ -1,19 +1,19 @@
-// LoadPanel — shaped load testing, mirroring the TUI flow: pick a profile
-// (live shape preview), confirm exactly what will be fired at which target,
-// watch the run (progress, counters, charts), then read the k6-style
-// analysis. Profiles are edited in the graphical ShapeEditor (raw JSON is a
-// toggle inside it).
+// LoadWorkspace — load testing as a first-class destination rather than a
+// dialog. It had outgrown a modal: profile selection, graphical editing,
+// confirmation, live execution, charts, history and comparison is a second
+// workspace, so it gets its own Profiles / Live run / Results views.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, formatDuration, type LoadRun, type Profile, type RequestDef } from "./api";
+import { api, formatDuration, unitFor, type LoadRun, type Profile, type RequestDef } from "./api";
+import { IconCopy } from "./icons";
 import { appConfirm, appPrompt } from "./dialogs";
 import ResultsView from "./ResultsView";
 import ShapeEditor from "./ShapeEditor";
-import { LatencyChart, Modal, ShapeChart } from "./ui";
+import { LatencyChart, ShapeChart } from "./ui";
 
 type Stage = "picker" | "edit" | "confirm" | "run" | "results";
 
-export default function LoadPanel({
+export default function LoadWorkspace({
   req,
   targetUrl,
   onClose,
@@ -21,7 +21,7 @@ export default function LoadPanel({
 }: {
   req: RequestDef;
   targetUrl: string; // resolved preview of where requests will go
-  onClose: () => void;
+  onClose: () => void; // back to the request workspace
   onNote: (s: string) => void;
 }) {
   const [stage, setStage] = useState<Stage>("picker");
@@ -102,9 +102,38 @@ export default function LoadPanel({
   const p = profiles[sel];
   // A run needs a target; browsing profiles and history does not.
   const hasURL = req.url.trim() !== "";
+  const view: "profiles" | "run" | "results" =
+    stage === "results" ? "results" : stage === "run" ? "run" : "profiles";
 
   return (
-    <Modal title="Load test" onClose={close} wide>
+    <section className="load-workspace">
+      <header className="load-header">
+        <nav className="load-nav" role="tablist" aria-label="load test views">
+          {([
+            ["profiles", "Profiles"],
+            ["run", "Live run"],
+            ["results", "Results"],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={view === id}
+              tabIndex={view === id ? 0 : -1}
+              className={"load-navitem" + (view === id ? " active" : "")}
+              disabled={id === "run" && !run?.running}
+              title={id === "run" && !run?.running ? "no run in progress" : undefined}
+              onClick={() => setStage(id === "profiles" ? "picker" : id)}
+            >
+              {label}
+              {id === "run" && run?.running && !run.done && <span className="live-dot" aria-hidden="true" />}
+            </button>
+          ))}
+        </nav>
+        <button className="mini" onClick={close}>
+          Back to request
+        </button>
+      </header>
+
       {stage === "picker" && (
         <div className="load-picker">
           <div className="profile-list" role="listbox" aria-label="load profiles">
@@ -116,7 +145,10 @@ export default function LoadPanel({
                 className={i === sel ? "profile active" : "profile"}
                 onClick={() => setSel(i)}
               >
-                <span className="p-name">{pr.name}</span>
+                <span className="p-name">
+                  {pr.name}
+                  {pr.mode === "users" && <span className="mode-tag">users</span>}
+                </span>
                 <span className="p-desc">{pr.description}</span>
               </button>
             ))}
@@ -175,7 +207,12 @@ export default function LoadPanel({
               <>
                 <ShapeChart points={p.points} durationMs={p.durationMs} peakRps={p.peakRps} showLegend={false} />
                 <div className="p-meta">
-                  peak {p.peakRps} rps · {formatDuration(p.durationMs)} · {p.planned} req total
+                  peak {p.peakRps} {unitFor(p.mode).short} · {formatDuration(p.durationMs)}
+                  {p.mode === "users"
+                    ? p.thinkTimeMs
+                      ? ` · ${formatDuration(p.thinkTimeMs)} think time`
+                      : " · no think time"
+                    : ` · ${p.planned} req total`}
                   {p.maxWorkers ? ` · ≤${p.maxWorkers} workers` : ""}
                 </div>
                 <button
@@ -214,8 +251,18 @@ export default function LoadPanel({
       {stage === "confirm" && p && (
         <div className="load-confirm">
           <p>
-            Run <b>{p.name}</b> — peak <b>{p.peakRps} rps</b>, up to <b>{p.planned}</b> requests over{" "}
-            <b>{formatDuration(p.durationMs)}</b>
+            {p.mode === "users" ? (
+              <>
+                Run <b>{p.name}</b> — up to <b>{p.peakRps} concurrent users</b> for{" "}
+                <b>{formatDuration(p.durationMs)}</b>
+                {p.thinkTimeMs ? <> , {formatDuration(p.thinkTimeMs)} think time</> : null}
+              </>
+            ) : (
+              <>
+                Run <b>{p.name}</b> — peak <b>{p.peakRps} rps</b>, up to <b>{p.planned}</b> requests over{" "}
+                <b>{formatDuration(p.durationMs)}</b>
+              </>
+            )}
           </p>
           <p className="target">
             against <span className="mono">{req.method} {targetUrl}</span>
@@ -242,7 +289,7 @@ export default function LoadPanel({
       )}
 
       {stage === "results" && <ResultsView onBack={() => setStage("picker")} onNote={onNote} />}
-    </Modal>
+    </section>
   );
 }
 
@@ -285,7 +332,7 @@ function RunView({
                 .catch(() => onNote("clipboard unavailable"));
             }}
           >
-            ⧉ Copy analysis
+            <IconCopy /> Copy analysis
           </button>
         )}
       </div>
@@ -315,14 +362,27 @@ function RunView({
           <span>
             cancel <b>{run.canceled}</b>
           </span>
+          {run.mode !== "users" && (
+            <span>
+              drop <b className={run.dropped > 0 ? "warn" : ""}>{run.dropped}</b>
+            </span>
+          )}
           <span>
-            drop <b className={run.dropped > 0 ? "warn" : ""}>{run.dropped}</b>
+            {run.mode === "users" ? "active users" : "in-flight"}{" "}
+            <b>
+              {run.inFlight}/{run.mode === "users" ? Math.round(run.targetNowRps) : run.maxWorkers}
+            </b>
           </span>
           <span>
-            in-flight <b>{run.inFlight}/{run.maxWorkers}</b>
-          </span>
-          <span>
-            rps <b>{run.achievedRps.toFixed(1)}</b> achieved · <b>{run.targetNowRps.toFixed(1)}</b> target now
+            {run.mode === "users" ? (
+              <>
+                throughput <b>{run.achievedRps.toFixed(1)}</b> rps
+              </>
+            ) : (
+              <>
+                rps <b>{run.achievedRps.toFixed(1)}</b> achieved · <b>{run.targetNowRps.toFixed(1)}</b> target now
+              </>
+            )}
           </span>
           <span>
             p50 <b>{run.p50Ms.toFixed(0)}ms</b> · p95 <b>{run.p95Ms.toFixed(0)}ms</b> · p99{" "}

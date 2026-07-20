@@ -52,18 +52,45 @@ type Point struct {
 // work (scheduled requests that find no free worker are counted as dropped).
 const DefaultMaxWorkers = 64
 
+// Execution modes. The shape means different things in each:
+//
+//	ModeRate  (default) — open loop. The plot is target requests/second;
+//	                      arrivals are scheduled on a clock regardless of how
+//	                      fast the target answers, so a slow target produces
+//	                      drops. Answers "can it sustain N rps?".
+//	ModeUsers            — closed loop. The plot is the number of concurrent
+//	                      virtual users, each looping send → await response →
+//	                      think → repeat. Throughput is an OUTCOME, so a slow
+//	                      target simply completes fewer requests, never drops.
+//	                      Answers "what happens with N people using it?".
+const (
+	ModeRate  = ""
+	ModeUsers = "users"
+)
+
 // Profile is a named, saveable load shape.
 type Profile struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	Points      []Point `json:"points"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Mode selects the executor; "" (rate) keeps every existing profile
+	// behaving exactly as before.
+	Mode string `json:"mode,omitempty"`
+	// Points plot the target over time. The y value is requests/second in
+	// rate mode and concurrent users in users mode.
+	Points []Point `json:"points"`
 	// MaxRequests stops scheduling after this many planned arrivals. Zero
 	// means the shape's full duration determines the request count.
 	MaxRequests int `json:"maxRequests,omitempty"`
 	// MaxWorkers bounds concurrent in-flight requests; 0 means
-	// DefaultMaxWorkers.
+	// DefaultMaxWorkers. In users mode it also caps the user count.
 	MaxWorkers int `json:"maxWorkers,omitempty"`
+	// ThinkTime is how long each virtual user waits between its requests
+	// (users mode only); 0 means hammer with no pause.
+	ThinkTime Duration `json:"thinkTime,omitempty"`
 }
+
+// Users reports whether this profile runs the closed-loop user executor.
+func (p Profile) Users() bool { return p.Mode == ModeUsers }
 
 // Validate reports whether the profile describes a runnable plot.
 func (p Profile) Validate() error {
@@ -90,6 +117,12 @@ func (p Profile) Validate() error {
 	if p.MaxRequests < 0 {
 		return errors.New("maxRequests must not be negative")
 	}
+	if p.ThinkTime < 0 {
+		return errors.New("thinkTime must not be negative")
+	}
+	if p.Mode != ModeRate && p.Mode != ModeUsers {
+		return fmt.Errorf("unknown mode %q (want %q or %q)", p.Mode, ModeRate, ModeUsers)
+	}
 	return nil
 }
 
@@ -97,6 +130,11 @@ func (p Profile) Validate() error {
 // request limit caps the integral of the full shape; dropped arrivals still
 // count because the engine is open-loop.
 func (p Profile) PlannedRequests() int {
+	// Closed loop: how many requests N users get through depends on the
+	// target's latency, so there is no number to promise up front.
+	if p.Users() {
+		return p.MaxRequests
+	}
 	total := int(p.ExpectedArrivals(p.Duration()))
 	if p.MaxRequests > 0 && p.MaxRequests < total {
 		return p.MaxRequests

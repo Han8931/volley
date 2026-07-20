@@ -82,6 +82,10 @@ On top of parity, the desktop app adds:
 - **Generate code** — the `</>` button beside Send renders the built
   request (variables resolved, auth applied, query folded) as a **curl**,
   **wget**, or **httpie** command, ready to copy.
+- **Load-test workbench** — a graphical shape editor (drag the points,
+  switch between rate and users mode, set think time), and a run history
+  browser with per-run metric cards, a p99 trend per profile, and deltas
+  against the previous run of that profile.
 - **Git sync** — point the config dir at a remote you own (GitHub or any
   git host) in Settings, then one-click *sync now* (commit → pull
   --rebase → push), or use the ⇅ button on the collections pane. Your
@@ -216,8 +220,19 @@ into the current tab, or when quitting — dirty background tabs included.
 
 ## Load testing
 
+Volley ships **two execution models**, chosen per profile with `mode`:
+
+| Mode | What the plot means | Behaviour | Answers |
+|------|--------------------|-----------|---------|
+| **rate** (default) | target requests/second | open loop — arrivals are scheduled on a clock no matter how fast the target answers, so a slow target produces **drops** | "can it sustain N rps?" |
+| **users** | number of concurrent virtual users | closed loop — each user loops send → await response → think → repeat, so throughput is an **outcome** and nothing is dropped | "what happens with N people using it?" |
+
+In users mode `thinkTime` sets the pause each user takes between its requests,
+and the same shapes work unchanged — a ramp becomes a growing user population
+rather than a rising request rate.
+
 Press the **TEST** button (or `:loadtest`, alias `:lt`) to pick a load profile —
-a plot of target request rate over time. The picker previews each shape as a
+a plot of the target over time. The picker previews each shape as a
 sparkline with its peak rate, duration, and total request count. After a y/n
 confirmation showing exactly what will be fired at which URL, the response pane
 becomes a live run view: ok/error/cancelled/dropped counters, achieved vs. target RPS,
@@ -293,6 +308,24 @@ offset make a vertical jump:
 }
 ```
 
+A closed-loop profile adds `mode` and `thinkTime`:
+
+```json
+{
+  "name": "users",
+  "description": "steady population of concurrent users",
+  "mode": "users",
+  "thinkTime": "1s",
+  "points": [
+    {"at": "0s",  "rps": 10},
+    {"at": "30s", "rps": 10}
+  ]
+}
+```
+
+(The `rps` key carries the plotted value in both modes — concurrent users when
+`mode` is `users`.)
+
 `maxRequests` optionally ends scheduling once that many planned arrivals have
 been attempted; zero or omission runs the complete shape. Because pacing is
 open-loop, arrivals that are dropped still count toward this limit.
@@ -343,10 +376,13 @@ read the same files.
 - [x] Desktop: request tabs, themes/density settings, resizable + foldable panes
 - [x] Code generation (curl / wget / httpie) from the built request
 - [x] Git sync for collections and load profiles (secrets stay local)
+- [x] Closed-loop load testing (concurrent virtual users with think time)
 - [ ] Load-test comparison (`:loadcompare` — did my change regress p99?)
 - [ ] Tab session persistence across restarts
 - [ ] Persist the active environment across restarts
 - [ ] Code generation and git sync from the TUI (`:codegen`, `:sync`)
+- [ ] TUI labelling for users-mode profiles (they run correctly, but the run
+      view and shape editor still speak only in rps)
 
 > Note: collections are stored as native JSON. Posting/Postman/Bruno collection
 > import/export is not implemented yet; curl import/export is supported.

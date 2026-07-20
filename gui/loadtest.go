@@ -39,6 +39,8 @@ type PointDTO struct {
 type ProfileDTO struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description,omitempty"`
+	Mode        string     `json:"mode"` // "" = rate (rps), "users" = closed loop
+	ThinkTimeMS int64      `json:"thinkTimeMs,omitempty"`
 	Points      []PointDTO `json:"points"`
 	MaxRequests int        `json:"maxRequests,omitempty"`
 	MaxWorkers  int        `json:"maxWorkers,omitempty"`
@@ -52,6 +54,8 @@ func fromProfile(p loadtest.Profile) ProfileDTO {
 	d := ProfileDTO{
 		Name:        p.Name,
 		Description: p.Description,
+		Mode:        p.Mode,
+		ThinkTimeMS: time.Duration(p.ThinkTime).Milliseconds(),
 		Points:      []PointDTO{},
 		MaxRequests: p.MaxRequests,
 		MaxWorkers:  p.MaxWorkers,
@@ -69,6 +73,8 @@ func toProfile(d ProfileDTO) loadtest.Profile {
 	p := loadtest.Profile{
 		Name:        d.Name,
 		Description: d.Description,
+		Mode:        d.Mode,
+		ThinkTime:   loadtest.Duration(time.Duration(d.ThinkTimeMS) * time.Millisecond),
 		MaxRequests: d.MaxRequests,
 		MaxWorkers:  d.MaxWorkers,
 	}
@@ -143,6 +149,7 @@ type LoadRunDTO struct {
 
 	Buckets []BucketDTO `json:"buckets"`
 
+	Mode        string            `json:"mode"` // "" = rate, "users" = closed loop
 	Stopped     bool              `json:"stopped"`
 	Summary     *loadtest.Summary `json:"summary,omitempty"`
 	SummaryText string            `json:"summaryText,omitempty"`
@@ -155,6 +162,7 @@ type LoadRunDTO struct {
 type ResultDTO struct {
 	File      string  `json:"file"`
 	Profile   string  `json:"profile"`
+	Mode      string  `json:"mode"`
 	Method    string  `json:"method"`
 	URL       string  `json:"url"`
 	StartedAt string  `json:"startedAt"` // RFC 3339
@@ -191,6 +199,7 @@ func (a *App) ListResults() ([]ResultDTO, error) {
 		out = append(out, ResultDTO{
 			File:      a.resultStore.FileName(s),
 			Profile:   s.Profile,
+			Mode:      s.Mode,
 			Method:    s.Method,
 			URL:       s.URL,
 			StartedAt: s.StartedAt.Format(time.RFC3339),
@@ -331,6 +340,7 @@ func (a *App) PollLoadTest() LoadRunDTO {
 		MaxMS:        ms(snap.Max),
 		MeanMS:       ms(snap.Mean),
 		Buckets:      []BucketDTO{},
+		Mode:         p.Mode,
 		Stopped:      a.load.stopped,
 		Summary:      a.load.summary,
 		SummaryText:  a.load.rendered,

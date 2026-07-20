@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type EnvState } from "./api";
 import { appConfirm, appPrompt } from "./dialogs";
+import { IconClose, IconEye, IconEyeOff, IconPlus } from "./icons";
 
 // parseEnvJSON accepts only a flat {"name": "value"} object — the on-disk
 // environment shape. Returns null when the text doesn't qualify.
@@ -151,10 +152,10 @@ export default function VarsSection({
                   })
                 }
               >
-                {revealed.has(k) ? "◡" : "◉"}
+                {revealed.has(k) ? <IconEyeOff size={14} /> : <IconEye size={14} />}
               </button>
               <button className="del" aria-label={`remove ${k}`} onClick={() => setVar(k, "")}>
-                ×
+                <IconClose size={14} />
               </button>
             </div>
           ))}
@@ -169,7 +170,7 @@ export default function VarsSection({
             onKeyDown={(e) => e.key === "Enter" && addVar()}
           />
           <button className="add" onClick={addVar}>
-            + Set
+            <IconPlus size={14} /> Set
           </button>
         </div>
 
@@ -211,7 +212,7 @@ export default function VarsSection({
             if (name) openEnv(name, { base_url: "https://api.example.com" });
           }}
         >
-          + New environment
+          <IconPlus size={14} /> New environment
         </button>
 
         {editing !== null && (
@@ -250,19 +251,19 @@ export default function VarsSection({
                       title={r.shown ? "hide" : "reveal"}
                       onClick={() => setRows(rows.map((x, j) => (i === j ? { ...x, shown: !x.shown } : x)))}
                     >
-                      {r.shown ? "◡" : "◉"}
+                      {r.shown ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                     </button>
                     <button
                       className="del"
                       aria-label={`remove row ${i + 1}`}
                       onClick={() => setRows(rows.filter((_, j) => j !== i))}
                     >
-                      ×
+                      <IconClose size={14} />
                     </button>
                   </div>
                 ))}
                 <button className="add" onClick={() => setRows([...rows, { key: "", value: "", shown: true }])}>
-                  + Add variable
+                  <IconPlus size={14} /> Add variable
                 </button>
               </div>
             )}

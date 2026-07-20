@@ -5,6 +5,7 @@
 
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { formatDuration, type ProfilePoint } from "./api";
+import { IconClose } from "./icons";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -88,7 +89,7 @@ export function Modal({
         <div className="modal-head">
           <span id={titleId}>{title}</span>
           <button className="modal-x" aria-label="close dialog" onClick={onClose}>
-            ×
+            <IconClose />
           </button>
         </div>
         {children}

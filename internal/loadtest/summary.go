@@ -11,6 +11,7 @@ import (
 // Durations serialize as strings ("42ms"), matching the profile format.
 type Summary struct {
 	Profile   string    `json:"profile"`
+	Mode      string    `json:"mode,omitempty"` // "" = rate, "users" = closed loop
 	Method    string    `json:"method"`
 	URL       string    `json:"url"`
 	StartedAt time.Time `json:"startedAt"`
@@ -45,6 +46,7 @@ type Summary struct {
 func Summarize(p Profile, method, url string, startedAt time.Time, snap Snapshot, stopped bool) Summary {
 	return Summary{
 		Profile:   p.Name,
+		Mode:      p.Mode,
 		Method:    method,
 		URL:       url,
 		StartedAt: startedAt,
@@ -105,7 +107,7 @@ func (s Summary) Render() string {
 			fmt.Sprintf("%d / %d", s.Canceled, s.Dropped)})
 	}
 	rows = append(rows,
-		[2]string{"rps", fmt.Sprintf("%.1f achieved · %.0f peak target", s.AchievedRPS, s.TargetPeakRPS)},
+		[2]string{rateLabel(s.Mode), rateValue(s)},
 		[2]string{"latency", fmt.Sprintf("min %s · avg %s · max %s",
 			fmtLatency(s.LatencyMin), fmtLatency(s.LatencyMean), fmtLatency(s.LatencyMax))},
 		[2]string{"percentiles", fmt.Sprintf("p50 %s · p90 %s · p95 %s · p99 %s",
@@ -132,6 +134,23 @@ func (s Summary) Render() string {
 		b.WriteString(r[1])
 	}
 	return b.String()
+}
+
+// rateLabel/rateValue phrase the throughput row for the executor that ran:
+// a rate run targets rps, a users run targets concurrency and merely achieves
+// some rps.
+func rateLabel(mode string) string {
+	if mode == ModeUsers {
+		return "throughput"
+	}
+	return "rps"
+}
+
+func rateValue(s Summary) string {
+	if s.Mode == ModeUsers {
+		return fmt.Sprintf("%.1f rps achieved · %.0f peak users", s.AchievedRPS, s.TargetPeakRPS)
+	}
+	return fmt.Sprintf("%.1f achieved · %.0f peak target", s.AchievedRPS, s.TargetPeakRPS)
 }
 
 // statusLine lists the non-zero response classes, e.g. "2xx 987 · 5xx 13".

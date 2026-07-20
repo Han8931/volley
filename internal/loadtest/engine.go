@@ -3,7 +3,9 @@ package loadtest
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,7 +57,11 @@ func (r Runner) Start(ctx context.Context) (*Run, error) {
 		cancel: cancel,
 		start:  start,
 	}
-	go run.pace(ctx, r)
+	if r.Profile.Users() {
+		go run.paceUsers(ctx, r)
+	} else {
+		go run.pace(ctx, r)
+	}
 	return run, nil
 }
 
@@ -124,6 +130,103 @@ func (run *Run) pace(ctx context.Context, r Runner) {
 		}
 		if elapsed >= total {
 			return
+		}
+	}
+}
+
+// paceUsers is the closed-loop scheduler: it keeps the pool of virtual users
+// matched to the plotted user count, and each user loops send → await → think
+// on its own. Nothing is ever dropped here — a slow target just means each
+// user completes fewer iterations, which is the whole point of the model.
+func (run *Run) paceUsers(ctx context.Context, r Runner) {
+	defer close(run.done)
+	defer run.cancel()
+	defer run.stats.finish()
+	var users sync.WaitGroup
+	defer users.Wait()
+
+	// Retiring a user closes its stop channel rather than cancelling its
+	// context, so a user that is mid-request finishes it instead of logging a
+	// cancellation. Run-level ctx cancellation still aborts immediately.
+	var pool []chan struct{}
+	defer func() {
+		for _, stop := range pool {
+			close(stop)
+		}
+	}()
+
+	var sent atomic.Int64
+	total := r.Profile.Duration()
+	cap := r.Profile.maxWorkers()
+	ticker := time.NewTicker(paceTick)
+	defer ticker.Stop()
+
+	for {
+		elapsed := time.Since(run.start)
+		want := int(math.Round(r.Profile.TargetAt(elapsed)))
+		if want < 0 {
+			want = 0
+		}
+		if want > cap {
+			want = cap
+		}
+		for len(pool) < want {
+			stop := make(chan struct{})
+			pool = append(pool, stop)
+			users.Add(1)
+			go run.virtualUser(ctx, stop, r, &users, &sent)
+		}
+		for len(pool) > want {
+			last := len(pool) - 1
+			close(pool[last])
+			pool = pool[:last]
+		}
+		if elapsed >= total {
+			return
+		}
+		if r.Profile.MaxRequests > 0 && int(sent.Load()) >= r.Profile.MaxRequests {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// virtualUser is one simulated person: request, wait for the answer, think,
+// repeat until retired (stop), cancelled (ctx), or the request budget is out.
+func (run *Run) virtualUser(ctx context.Context, stop <-chan struct{}, r Runner, wg *sync.WaitGroup, sent *atomic.Int64) {
+	defer wg.Done()
+	think := time.Duration(r.Profile.ThinkTime)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stop:
+			return
+		default:
+		}
+		if r.Profile.MaxRequests > 0 && int(sent.Add(1)) > r.Profile.MaxRequests {
+			return
+		}
+		run.stats.recordSent(time.Since(run.start))
+		begin := time.Now()
+		status, err := r.Do(ctx)
+		run.stats.recordResult(time.Since(run.start), time.Since(begin), status, err)
+		if think <= 0 {
+			continue
+		}
+		timer := time.NewTimer(think)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-stop:
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

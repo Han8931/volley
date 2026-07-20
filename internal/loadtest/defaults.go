@@ -88,9 +88,22 @@ func Sawtooth(peak float64, cycles int, cycleLen time.Duration) Profile {
 	return p
 }
 
+// Users is a closed-loop shape: a steady population of concurrent users,
+// each looping request → response → think.
+func Users(users float64, think, d time.Duration) Profile {
+	return Profile{
+		Name:        "users",
+		Description: "steady population of concurrent users",
+		Mode:        ModeUsers,
+		ThinkTime:   Duration(think),
+		Points:      []Point{{At: 0, RPS: users}, {At: Duration(d), RPS: users}},
+	}
+}
+
 // DefaultProfiles are the shapes offered out of the box.
 func DefaultProfiles() []Profile {
 	return []Profile{
+		Users(10, time.Second, 30*time.Second),
 		Constant(20, 30*time.Second),
 		Ramp(50, time.Minute),
 		Spike(5, 100, 20*time.Second, 10*time.Second, 20*time.Second),

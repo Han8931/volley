@@ -63,9 +63,13 @@ export interface ProfilePoint {
   rps: number;
 }
 
+export type LoadMode = "" | "users"; // "" = arrival rate (rps), "users" = closed loop
+
 export interface Profile {
   name: string;
   description?: string;
+  mode: LoadMode;
+  thinkTimeMs?: number;
   points: ProfilePoint[];
   maxRequests?: number;
   maxWorkers?: number;
@@ -82,6 +86,7 @@ export interface Bucket {
 export interface LoadRun {
   running: boolean;
   done: boolean;
+  mode: LoadMode;
   profile: Profile;
   elapsedMs: number;
   sent: number;
@@ -133,6 +138,7 @@ export interface SyncReport {
 export interface RunResult {
   file: string;
   profile: string;
+  mode: LoadMode;
   method: string;
   url: string;
   startedAt: string; // RFC 3339
@@ -219,6 +225,14 @@ export function blankRequest(): RequestDef {
     auth: { type: "" },
     timeoutMs: 0,
   };
+}
+
+// unitFor names the plotted quantity for a mode — the y axis means requests
+// per second in rate mode and concurrent users in users mode.
+export function unitFor(mode: LoadMode): { axis: string; short: string; noun: string } {
+  return mode === "users"
+    ? { axis: "users", short: "users", noun: "concurrent users" }
+    : { axis: "rps", short: "rps", noun: "requests per second" };
 }
 
 // parseDuration turns "10s" / "500ms" / "2m" / "1.5s" into milliseconds
