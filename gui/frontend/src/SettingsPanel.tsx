@@ -1,3 +1,6 @@
+// SettingsPanel — configuration grouped into sections behind a left-hand
+// nav, so the dialog shows one topic at a time instead of one long scroll.
+
 import { useEffect, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import { api, type SyncState } from "./api";
 import {
@@ -8,6 +11,17 @@ import {
   type Density,
 } from "./appearance";
 import { Modal } from "./ui";
+import VarsSection from "./VarsPanel";
+import type { EnvState } from "./api";
+
+type SectionID = "appearance" | "interface" | "variables" | "sync";
+
+const SECTIONS: { id: SectionID; label: string; blurb: string }[] = [
+  { id: "appearance", label: "Appearance", blurb: "Color theme" },
+  { id: "interface", label: "Interface", blurb: "Density and text size" },
+  { id: "variables", label: "Variables", blurb: "Environments and overrides" },
+  { id: "sync", label: "Sync", blurb: "Git remote" },
+];
 
 // radioNav implements the radio-group arrow-key contract: ←/↑ select the
 // previous option, →/↓ the next, wrapping. Selection follows focus, per the
@@ -29,81 +43,114 @@ export default function SettingsPanel({
   appearance,
   onChange,
   onClose,
+  env,
+  onEnvChange,
+  onNote,
+  initialSection = "appearance",
 }: {
   appearance: Appearance;
   onChange: Dispatch<SetStateAction<Appearance>>;
   onClose: () => void;
+  env: EnvState;
+  onEnvChange: (st: EnvState) => void;
+  onNote: (s: string) => void;
+  initialSection?: SectionID;
 }) {
+  const [section, setSection] = useState<SectionID>(initialSection);
   const patch = (next: Partial<Appearance>) => onChange((current) => ({ ...current, ...next }));
 
   return (
-    <Modal title="Settings" onClose={onClose}>
-      <div className="settings-panel">
-        <section className="settings-section" aria-labelledby="theme-heading">
-          <div className="settings-heading">
-            <div>
-              <h3 id="theme-heading">Color theme</h3>
-              <p>Choose a palette that fits your workspace.</p>
-            </div>
-            <span className="setting-badge">Saved automatically</span>
-          </div>
-          <div className="theme-grid" role="radiogroup" aria-label="Color theme">
-            {THEMES.map((theme) => (
-              <button
-                key={theme.id}
-                className={"theme-card" + (appearance.theme === theme.id ? " active" : "")}
-                role="radio"
-                aria-checked={appearance.theme === theme.id}
-                tabIndex={appearance.theme === theme.id ? 0 : -1}
-                onClick={() => patch({ theme: theme.id })}
-                onKeyDown={(e) =>
-                  radioNav(e, THEMES.map((t) => t.id), appearance.theme, (theme) => patch({ theme }))
-                }
-              >
-                <span className="theme-preview" style={{ background: theme.colors[0] }} aria-hidden="true">
-                  <i style={{ background: theme.colors[1] }} />
-                  <i style={{ background: theme.colors[2] }} />
-                  <i style={{ background: theme.colors[1] }} />
-                </span>
-                <span className="theme-copy">
-                  <b>{theme.name}</b>
-                  <small>{theme.description}</small>
-                </span>
-                <span className="theme-check" aria-hidden="true">✓</span>
-              </button>
-            ))}
-          </div>
-        </section>
+    <Modal title="Settings" onClose={onClose} wide>
+      <div className="settings-layout">
+        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="settings sections">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              role="tab"
+              aria-selected={section === s.id}
+              className={"settings-navitem" + (section === s.id ? " active" : "")}
+              onClick={() => setSection(s.id)}
+            >
+              <b>{s.label}</b>
+              <small>{s.blurb}</small>
+            </button>
+          ))}
+        </nav>
 
-        <section className="settings-section split-settings">
-          <SettingChoice<Density>
-            title="Interface density"
-            description="Adjust spacing throughout the workspace."
-            value={appearance.density}
-            choices={[
-              ["comfortable", "Comfortable"],
-              ["compact", "Compact"],
-            ]}
-            onChange={(density) => patch({ density })}
-          />
-          <SettingChoice<CodeSize>
-            title="Editor text"
-            description="Set the size of request and response text."
-            value={appearance.codeSize}
-            choices={[
-              ["small", "Small"],
-              ["medium", "Medium"],
-              ["large", "Large"],
-            ]}
-            onChange={(codeSize) => patch({ codeSize })}
-          />
-        </section>
+        <div className="settings-body" role="tabpanel">
+          {section === "appearance" && (
+            <section className="settings-section" aria-labelledby="theme-heading">
+              <div className="settings-heading">
+                <div>
+                  <h3 id="theme-heading">Color theme</h3>
+                  <p>Choose a palette that fits your workspace.</p>
+                </div>
+                <span className="setting-badge">Saved automatically</span>
+              </div>
+              <div className="theme-grid" role="radiogroup" aria-label="Color theme">
+                {THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    className={"theme-card" + (appearance.theme === theme.id ? " active" : "")}
+                    role="radio"
+                    aria-checked={appearance.theme === theme.id}
+                    tabIndex={appearance.theme === theme.id ? 0 : -1}
+                    onClick={() => patch({ theme: theme.id })}
+                    onKeyDown={(e) =>
+                      radioNav(e, THEMES.map((t) => t.id), appearance.theme, (theme) => patch({ theme }))
+                    }
+                  >
+                    <span className="theme-preview" style={{ background: theme.colors[0] }} aria-hidden="true">
+                      <i style={{ background: theme.colors[1] }} />
+                      <i style={{ background: theme.colors[2] }} />
+                      <i style={{ background: theme.colors[1] }} />
+                    </span>
+                    <span className="theme-copy">
+                      <b>{theme.name}</b>
+                      <small>{theme.description}</small>
+                    </span>
+                    <span className="theme-check" aria-hidden="true">✓</span>
+                  </button>
+                ))}
+              </div>
+              <div className="settings-footer">
+                <p>Appearance settings stay on this device.</p>
+                <button className="mini" onClick={() => onChange(DEFAULT_APPEARANCE)}>Reset appearance</button>
+              </div>
+            </section>
+          )}
 
-        <SyncSection />
+          {section === "interface" && (
+            <section className="settings-section split-settings">
+              <SettingChoice<Density>
+                title="Interface density"
+                description="Adjust spacing throughout the workspace."
+                value={appearance.density}
+                choices={[
+                  ["comfortable", "Comfortable"],
+                  ["compact", "Compact"],
+                ]}
+                onChange={(density) => patch({ density })}
+              />
+              <SettingChoice<CodeSize>
+                title="Editor text"
+                description="Set the size of request and response text."
+                value={appearance.codeSize}
+                choices={[
+                  ["small", "Small"],
+                  ["medium", "Medium"],
+                  ["large", "Large"],
+                ]}
+                onChange={(codeSize) => patch({ codeSize })}
+              />
+            </section>
+          )}
 
-        <div className="settings-footer">
-          <p>Appearance settings stay on this device.</p>
-          <button className="mini" onClick={() => onChange(DEFAULT_APPEARANCE)}>Reset appearance</button>
+          {section === "variables" && (
+            <VarsSection env={env} onEnvChange={onEnvChange} onNote={onNote} />
+          )}
+
+          {section === "sync" && <SyncSection />}
         </div>
       </div>
     </Modal>
@@ -182,10 +229,10 @@ function SyncSection() {
               onChange={(e) => setRemote(e.target.value)}
             />
             <button className="mini" disabled={busy} onClick={setup}>
-              {st?.configured ? "update remote" : "set up"}
+              {st?.configured ? "Update remote" : "Set up"}
             </button>
             <button className="primary" disabled={busy || !st?.configured} onClick={syncNow}>
-              sync now
+              Sync now
             </button>
           </div>
           <p className="hint">

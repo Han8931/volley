@@ -1,12 +1,12 @@
-// VarsPanel — session {{variable}} overrides (the TUI's :set) and named
-// environment management (:env / :envnew / :envedit / :envrm), in one modal.
+// VarsSection — session {{variable}} overrides (the TUI's :set) and named
+// environment management (:env / :envnew / :envedit / :envrm). Rendered as a
+// section inside Settings.
 // Environment values are masked by default — they tend to hold tokens — with
 // a per-row reveal; editing is key/value rows, with raw JSON as a toggle.
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type EnvState } from "./api";
 import { appConfirm, appPrompt } from "./dialogs";
-import { Modal } from "./ui";
 
 interface EnvRow {
   key: string;
@@ -14,15 +14,13 @@ interface EnvRow {
   shown: boolean;
 }
 
-export default function VarsPanel({
+export default function VarsSection({
   env,
   onEnvChange,
-  onClose,
   onNote,
 }: {
   env: EnvState;
   onEnvChange: (st: EnvState) => void;
-  onClose: () => void;
   onNote: (s: string) => void;
 }) {
   const [session, setSession] = useState<Record<string, string>>({});
@@ -115,8 +113,7 @@ export default function VarsPanel({
   };
 
   return (
-    <Modal title="Variables" onClose={onClose}>
-      <div className="vars">
+    <div className="vars">
         <h3>session overrides</h3>
         <p className="hint">Highest precedence; gone when the app closes. Clearing a value removes it.</p>
         {Object.entries(session)
@@ -282,7 +279,6 @@ export default function VarsPanel({
             </div>
           </div>
         )}
-      </div>
-    </Modal>
+    </div>
   );
 }

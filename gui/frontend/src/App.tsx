@@ -15,14 +15,14 @@ import {
   type TreeItem,
 } from "./api";
 import { appConfirm, appPrompt, DialogHost } from "./dialogs";
+import { CodeArea, Highlighted } from "./highlight";
 import LoadPanel from "./LoadPanel";
 import SettingsPanel from "./SettingsPanel";
 import { useAppearance } from "./appearance";
 import { Modal } from "./ui";
-import VarsPanel from "./VarsPanel";
 
 type ReqTab = "headers" | "query" | "body" | "auth";
-type Panel = "" | "vars" | "load" | "curl-import" | "settings" | "code";
+type Panel = "" | "load" | "curl-import" | "settings" | "code";
 
 // Layout preferences survive restarts (px for the sidebar, fraction of the
 // column for the request editor).
@@ -65,6 +65,11 @@ export default function App() {
   const [note, setNote] = useState("");
   const [panel, setPanel] = useState<Panel>("");
   const [curlText, setCurlText] = useState("");
+  // Which Settings section to open on (the gear lands on Appearance; other
+  // entry points deep-link, e.g. an unconfigured Sync).
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "interface" | "variables" | "sync">(
+    "appearance",
+  );
   const [targetUrl, setTargetUrl] = useState("");
   const [sidebarW, setSidebarW] = useState(() => savedNum("volley.sidebarW", 230));
   const [treeFolded, setTreeFolded] = useState(() => localStorage.getItem("volley.treeFolded") === "on");
@@ -215,11 +220,16 @@ export default function App() {
     }
   };
 
+  const openSettings = (section: typeof settingsSection = "appearance") => {
+    setSettingsSection(section);
+    setPanel("settings");
+  };
+
   const syncNow = async () => {
     const st = await api.SyncStatus();
     if (!st.configured) {
       setNote("sync is not set up — configure it in Settings");
-      setPanel("settings");
+      openSettings("sync");
       return;
     }
     setNote("syncing…");
@@ -355,14 +365,17 @@ export default function App() {
             <small>API workspace</small>
           </span>
         </div>
+        {/* Collection-level actions. Creating a request lives on the tab
+            strip's +, so it isn't repeated here. */}
         <div className="tree-toolbar" role="toolbar" aria-label="collection actions">
-          <button onClick={newRequest}>+ request</button>
-          <button onClick={newGroup}>+ group</button>
-          <button onClick={refreshTree} aria-label="reload collections from disk" title="reload from disk">
-            ⟳
+          <button onClick={newGroup} title="new group (folder)">
+            <span aria-hidden="true">+</span> Group
           </button>
-          <button onClick={syncNow} aria-label="sync collections with git remote" title="sync (git)">
-            ⇅
+          <button onClick={refreshTree} title="reload collections from disk">
+            <span aria-hidden="true">⟳</span> Reload
+          </button>
+          <button onClick={syncNow} title="commit and push collections to your git remote">
+            <span aria-hidden="true">⇅</span> Sync
           </button>
         </div>
         <div className="tree">
@@ -377,7 +390,7 @@ export default function App() {
                     aria-expanded={!collapsed.has(it.name)}
                     onClick={() => toggleGroup(it.name)}
                   >
-                    <span className="twist">{collapsed.has(it.name) ? "▸" : "▾"}</span> {leaf}/
+                    {leaf}/
                   </button>
                 ) : (
                   <button
@@ -411,32 +424,21 @@ export default function App() {
           })}
           {tree.length === 0 && <div className="empty">no saved requests</div>}
         </div>
-        <div className="envbox">
-          <label htmlFor="env-select">environment</label>
-          <select id="env-select" value={env.active} onChange={(e) => switchEnv(e.target.value)}>
-            <option value="">(none)</option>
-            {env.names.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-          <button className="varsbtn" onClick={() => setPanel("vars")}>
-            <span aria-hidden="true">{"{·}"}</span> Variables
-          </button>
-        </div>
         </aside>
       )}
 
-      <button
-        className="pane-rail"
-        onClick={() => foldTree(!treeFolded)}
-        title={treeFolded ? "show collections" : "hide collections"}
-        aria-label={treeFolded ? "show collections" : "hide collections"}
-        aria-expanded={!treeFolded}
-      >
-        <span aria-hidden="true">{treeFolded ? "›" : "‹"}</span>
-      </button>
+      {/* The pane's edge doubles as the fold handle. */}
+      <div className="rail-strip">
+        <button
+          className="pane-rail"
+          onClick={() => foldTree(!treeFolded)}
+          title={treeFolded ? "show collections" : "hide collections"}
+          aria-label={treeFolded ? "show collections" : "hide collections"}
+          aria-expanded={!treeFolded}
+        >
+          <span aria-hidden="true">{treeFolded ? "›" : "‹"}</span>
+        </button>
+      </div>
 
       {!treeFolded && (
         <div
@@ -461,6 +463,9 @@ export default function App() {
       )}
 
       <main className="main">
+        {/* Tabs scroll; Settings is pinned outside that scroll area so it
+            stays in the window's top-right corner. */}
+        <div className="tabrow">
         <div className="tabstrip" role="tablist" aria-label="open requests">
           {tabs.map((t, i) => (
             <div className={"rtab" + (i === active ? " active" : "")} key={t.id}>
@@ -488,6 +493,29 @@ export default function App() {
           ))}
           <button className="rtab-new" onClick={newRequest} aria-label="new request tab" title="new request">
             +
+          </button>
+        </div>
+          <select
+            className="env-picker"
+            aria-label="active environment"
+            title="active environment"
+            value={env.active}
+            onChange={(e) => switchEnv(e.target.value)}
+          >
+            <option value="">No environment</option>
+            {env.names.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <button
+            className="settings-button corner-settings"
+            onClick={() => openSettings()}
+            aria-label="Open settings"
+            title="Settings"
+          >
+            <SettingsIcon />
           </button>
         </div>
 
@@ -527,9 +555,6 @@ export default function App() {
           <button className="save" onClick={save} title={current ? `save ${current}` : "save as"}>
             Save
           </button>
-          <button className="settings-button" onClick={() => setPanel("settings")} aria-label="Open settings" title="Settings">
-            <SettingsIcon />
-          </button>
         </div>
 
         <div className="workrow" ref={workRowRef}>
@@ -560,6 +585,7 @@ export default function App() {
                 <RowsEditor
                   rows={req.headers.map((h) => ({ key: h.name, value: h.value, enabled: h.enabled }))}
                   placeholderKey="Header-Name"
+                  keyLabel="Header"
                   onChange={(rows) =>
                     setReq({
                       ...req,
@@ -572,16 +598,16 @@ export default function App() {
                 <RowsEditor
                   rows={req.query}
                   placeholderKey="param"
+                  keyLabel="Parameter"
                   onChange={(rows) => setReq({ ...req, query: rows })}
                 />
               )}
               {tab === "body" && (
-                <textarea
-                  className="body"
-                  aria-label="request body"
-                  placeholder='{"raw": "request body"}'
+                <CodeArea
                   value={req.body}
-                  onChange={(e) => setReq({ ...req, body: e.target.value })}
+                  onChange={(body) => setReq({ ...req, body })}
+                  ariaLabel="request body"
+                  placeholder='{"raw": "request body"}'
                 />
               )}
               {tab === "auth" && <AuthEditor req={req} onChange={setReq} />}
@@ -618,14 +644,19 @@ export default function App() {
       </main>
 
       {panel === "code" && <CodeModal req={req} onClose={() => setPanel("")} onNote={setNote} />}
-      {panel === "vars" && (
-        <VarsPanel env={env} onEnvChange={setEnv} onClose={() => setPanel("")} onNote={setNote} />
-      )}
       {panel === "load" && (
         <LoadPanel req={req} targetUrl={targetUrl} onClose={() => setPanel("")} onNote={setNote} />
       )}
       {panel === "settings" && (
-        <SettingsPanel appearance={appearance} onChange={setAppearance} onClose={() => setPanel("")} />
+        <SettingsPanel
+          appearance={appearance}
+          onChange={setAppearance}
+          onClose={() => setPanel("")}
+          env={env}
+          onEnvChange={setEnv}
+          onNote={setNote}
+          initialSection={settingsSection}
+        />
       )}
       {panel === "curl-import" && (
         <Modal title="Import curl" onClose={() => setPanel("")}>
@@ -757,16 +788,37 @@ function TimeoutInput({
 function RowsEditor({
   rows,
   placeholderKey,
+  keyLabel,
   onChange,
 }: {
   rows: KV[];
   placeholderKey: string;
+  keyLabel: string;
   onChange: (rows: KV[]) => void;
 }) {
   const set = (i: number, patch: Partial<KV>) =>
     onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
+  // Typing in the trailing blank row promotes it to a real one (Postman's
+  // ghost row) — no "add" click needed. It carries the key it will hold once
+  // promoted, so React reuses the same DOM node and the caret stays put.
+  const promote = (patch: Partial<KV>) => onChange([...rows, { key: "", value: "", enabled: true, ...patch }]);
   return (
     <div className="rows">
+      {/* Column header; the add button sits in the same column as each row's
+          delete button, so the controls line up vertically. */}
+      <div className="row rows-head">
+        <span className="head-check" aria-hidden="true" />
+        <span className="head-label k">{keyLabel}</span>
+        <span className="head-label v">Value</span>
+        <button
+          className="add"
+          title={`add ${keyLabel.toLowerCase()}`}
+          aria-label={`add ${keyLabel.toLowerCase()}`}
+          onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}
+        >
+          +
+        </button>
+      </div>
       {rows.map((r, i) => (
         <div className="row" key={i}>
           <input
@@ -782,9 +834,24 @@ function RowsEditor({
           </button>
         </div>
       ))}
-      <button className="add" onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}>
-        + add
-      </button>
+      <div className="row ghost" key={rows.length}>
+        <input type="checkbox" checked={false} readOnly tabIndex={-1} aria-hidden="true" />
+        <input
+          className="k"
+          placeholder={placeholderKey}
+          aria-label={`new ${placeholderKey}`}
+          value=""
+          onChange={(e) => promote({ key: e.target.value })}
+        />
+        <input
+          className="v"
+          placeholder="value"
+          aria-label="new value"
+          value=""
+          onChange={(e) => promote({ value: e.target.value })}
+        />
+        <span className="del-spacer" aria-hidden="true" />
+      </div>
     </div>
   );
 }
@@ -794,32 +861,61 @@ function AuthEditor({ req, onChange }: { req: RequestDef; onChange: (r: RequestD
   const set = (patch: Partial<RequestDef["auth"]>) => onChange({ ...req, auth: { ...a, ...patch } });
   return (
     <div className="auth">
-      <select
-        aria-label="auth type"
-        value={a.type}
-        onChange={(e) => set({ type: e.target.value as RequestDef["auth"]["type"] })}
-      >
-        <option value="">no auth</option>
-        <option value="bearer">bearer token</option>
-        <option value="basic">basic</option>
-        <option value="apikey">api key</option>
-      </select>
+      <label className="auth-field">
+        <span>Type</span>
+        <select value={a.type} onChange={(e) => set({ type: e.target.value as RequestDef["auth"]["type"] })}>
+          <option value="">No auth</option>
+          <option value="bearer">Bearer token</option>
+          <option value="basic">Basic</option>
+          <option value="apikey">API key</option>
+        </select>
+      </label>
       {a.type === "bearer" && (
-        <input placeholder="token" value={a.token ?? ""} onChange={(e) => set({ token: e.target.value })} />
+        <label className="auth-field">
+          <span>Token</span>
+          <input
+            className="mono"
+            placeholder="{{token}} or a literal value"
+            value={a.token ?? ""}
+            onChange={(e) => set({ token: e.target.value })}
+          />
+        </label>
       )}
       {a.type === "basic" && (
         <>
-          <input placeholder="username" value={a.username ?? ""} onChange={(e) => set({ username: e.target.value })} />
-          <input type="password" placeholder="password" value={a.password ?? ""} onChange={(e) => set({ password: e.target.value })} />
+          <label className="auth-field">
+            <span>Username</span>
+            <input className="mono" value={a.username ?? ""} onChange={(e) => set({ username: e.target.value })} />
+          </label>
+          <label className="auth-field">
+            <span>Password</span>
+            <input
+              className="mono"
+              type="password"
+              value={a.password ?? ""}
+              onChange={(e) => set({ password: e.target.value })}
+            />
+          </label>
         </>
       )}
       {a.type === "apikey" && (
         <>
-          <input placeholder="key name" value={a.key ?? ""} onChange={(e) => set({ key: e.target.value })} />
-          <input placeholder="value" value={a.value ?? ""} onChange={(e) => set({ value: e.target.value })} />
+          <label className="auth-field">
+            <span>Key name</span>
+            <input
+              className="mono"
+              placeholder="X-API-Key"
+              value={a.key ?? ""}
+              onChange={(e) => set({ key: e.target.value })}
+            />
+          </label>
+          <label className="auth-field">
+            <span>Value</span>
+            <input className="mono" value={a.value ?? ""} onChange={(e) => set({ value: e.target.value })} />
+          </label>
           <label className="inq">
             <input type="checkbox" checked={a.inQuery ?? false} onChange={(e) => set({ inQuery: e.target.checked })} />
-            in query string
+            Send in query string instead of a header
           </label>
         </>
       )}
@@ -888,7 +984,7 @@ function ResponsePane({
       {view === "headers" ? (
         <pre className="resp-body">{resp.headers.map((h) => `${h.name}: ${h.value}`).join("\n")}</pre>
       ) : (
-        <pre className="resp-body">{bodyText}</pre>
+        <Highlighted className="resp-body" text={bodyText} />
       )}
     </section>
   );

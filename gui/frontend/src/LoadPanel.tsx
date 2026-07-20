@@ -102,7 +102,7 @@ export default function LoadPanel({
   const p = profiles[sel];
 
   return (
-    <Modal title="LOAD TEST" onClose={close} wide>
+    <Modal title="Load test" onClose={close} wide>
       {stage === "picker" && (
         <div className="load-picker">
           <div className="profile-list" role="listbox" aria-label="load profiles">
@@ -118,9 +118,9 @@ export default function LoadPanel({
                 <span className="p-desc">{pr.description}</span>
               </button>
             ))}
-            <div className="row-buttons">
-              <button className="mini" onClick={() => setStage("results")}>
-                history
+            <div className="profile-actions">
+              <button className="mini" onClick={() => setStage("results")} title="past runs and p99 trend">
+                History
               </button>
               <button
                 className="mini"
@@ -139,7 +139,7 @@ export default function LoadPanel({
                   setStage("edit");
                 }}
               >
-                + new
+                New
               </button>
               {p && (
                 <>
@@ -151,10 +151,10 @@ export default function LoadPanel({
                       setStage("edit");
                     }}
                   >
-                    edit shape
+                    Edit shape
                   </button>
                   <button
-                    className="mini danger"
+                    className="mini danger push-right"
                     onClick={async () => {
                       if (await appConfirm(`Delete profile ${p.name}?`, { danger: true })) {
                         await api.DeleteProfile(p.name);
@@ -162,7 +162,7 @@ export default function LoadPanel({
                       }
                     }}
                   >
-                    delete
+                    Delete
                   </button>
                 </>
               )}
@@ -177,7 +177,7 @@ export default function LoadPanel({
                   {p.maxWorkers ? ` · ≤${p.maxWorkers} workers` : ""}
                 </div>
                 <button className="primary" onClick={() => setStage("confirm")}>
-                  run against the current request
+                  Run this profile
                 </button>
               </>
             )}
@@ -210,9 +210,9 @@ export default function LoadPanel({
           <p className="hint">A spike aimed at the wrong URL is the classic load-testing footgun.</p>
           <div className="row-buttons">
             <button className="primary" onClick={start}>
-              fire
+              Fire
             </button>
-            <button onClick={() => setStage("picker")}>back</button>
+            <button onClick={() => setStage("picker")}>Back</button>
           </div>
         </div>
       )}
@@ -272,7 +272,7 @@ function RunView({
                 .catch(() => onNote("clipboard unavailable"));
             }}
           >
-            ⧉ copy analysis
+            ⧉ Copy analysis
           </button>
         )}
       </div>
@@ -338,16 +338,16 @@ function RunView({
         {run.done ? (
           <>
             <button className="primary" onClick={onRerun}>
-              run again
+              Run again
             </button>
             <button className="mini" onClick={onResults}>
-              history
+              History
             </button>
-            <button onClick={onClose}>close</button>
+            <button onClick={onClose}>Close</button>
           </>
         ) : (
           <button className="danger" onClick={onStop}>
-            stop
+            Stop
           </button>
         )}
       </div>

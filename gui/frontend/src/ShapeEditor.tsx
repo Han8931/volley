@@ -236,10 +236,10 @@ export default function ShapeEditor({
             />
           </label>
           <button className="mini" onClick={addPoint}>
-            + point after
+            Add point
           </button>
           <button className="mini danger" onClick={deletePoint}>
-            × delete point
+            Delete point
           </button>
         </fieldset>
 
@@ -277,23 +277,23 @@ export default function ShapeEditor({
           <textarea className="mono" value={jsonText} onChange={(e) => setJSONText(e.target.value)} spellCheck={false} />
           <div className="row-buttons">
             <button className="primary" onClick={applyJSON}>
-              apply JSON
+              Apply JSON
             </button>
-            <button onClick={() => setShowJSON(false)}>cancel</button>
+            <button onClick={() => setShowJSON(false)}>Cancel</button>
           </div>
         </div>
       )}
 
       <div className="row-buttons">
         <button className="primary" onClick={save}>
-          save profile
+          Save profile
         </button>
         {!showJSON && (
           <button className="mini" onClick={openJSON}>
-            edit as JSON
+            Edit as JSON
           </button>
         )}
-        <button onClick={onCancel}>cancel</button>
+        <button onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

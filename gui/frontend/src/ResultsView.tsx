@@ -64,7 +64,7 @@ export default function ResultsView({
       <div className="results-view">
         <p className="hint">No saved runs yet — every finished load test lands here automatically.</p>
         <div className="row-buttons">
-          <button onClick={onBack}>back</button>
+          <button onClick={onBack}>Back</button>
         </div>
       </div>
     );
@@ -130,10 +130,10 @@ export default function ResultsView({
                     .catch(() => onNote("clipboard unavailable"))
                 }
               >
-                ⧉ copy
+                ⧉ Copy
               </button>
               <button className="mini danger" onClick={() => remove(current)}>
-                delete
+                Delete
               </button>
             </div>
           </div>
@@ -141,7 +141,7 @@ export default function ResultsView({
       </div>
 
       <div className="row-buttons">
-        <button onClick={onBack}>back</button>
+        <button onClick={onBack}>Back</button>
       </div>
     </div>
   );

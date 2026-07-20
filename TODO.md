@@ -1,6 +1,6 @@
 # Volley — Roadmap & UX Ideas
 
-_Last updated: 2026-07-19_
+_Last updated: 2026-07-20_
 
 Ideas to grow Volley from a functional MVP into a tool that a Postman/Bruno user
 would happily switch to **in the terminal**. Each item notes **why** it matters
@@ -14,23 +14,27 @@ or two), **L** (multi-day).
 | Send request / view response    |   ✅    |  ✅   | ✅ |
 | Vim-native, terminal-first      |   ❌    |  ❌   | ✅ (unique) |
 | Git-friendly, offline, no account |  ❌    |  ✅   | ✅ |
+| Native desktop app              |   ✅    |  ✅   | ✅ (Wails, shared core) |
 | Collections / folders           |   ✅    |  ✅   | ✅ |
-| Variables                       |   ✅    |  ✅   | ⚠️ single in-memory scope |
-| Environments (dev/stg/prod)     |   ✅    |  ✅   | ❌ |
+| Request tabs                    |   ✅    |  ✅   | ✅ (TUI + GUI) |
+| Variables                       |   ✅    |  ✅   | ✅ layered (session → env → OS) |
+| Environments (dev/stg/prod)     |   ✅    |  ✅   | ✅ |
 | Auth helpers (Bearer/Basic/…)   |   ✅    |  ✅   | ✅ |
 | Body types (form/multipart/GQL) |   ✅    |  ✅   | ❌ (raw only) |
 | Assertions / tests              |   ✅    |  ✅   | ❌ |
 | Value extraction / chaining     |   ✅    |  ✅   | ❌ |
 | curl import / export            |   ✅    |  ✅   | ✅ |
-| OpenAPI / code-gen import       |   ✅    |  ✅   | ❌ |
+| Code generation (curl/wget/httpie) | ✅   |  ✅   | ✅ GUI (TUI pending) |
+| Git sync (one-click)            |   ❌ (cloud) | ⚠️ (external git) | ✅ GUI (TUI pending) |
+| OpenAPI import                  |   ✅    |  ✅   | ❌ |
 | Request history                 |   ✅    |  ⚠️   | ❌ |
 | Headless CLI runner (CI)        |  (Newman) | ✅ (`bru run`) | ❌ |
-| **Load testing**                |   ❌    |  ❌   | 🎯 planned (unique) |
+| **Load testing**                |   ❌    |  ❌   | ✅ shipped (unique): shaped profiles, live charts, k6-style analysis, results browser |
 
 **Volley's wedge:** the only tool that is *Vim-native + git-friendly + an API
-client **and** a load tester* in one terminal binary. Lean into that — parity on
-the boring essentials (auth, envs, bodies), then differentiate hard on
-keyboard-speed workflows and load testing.
+client **and** a load tester* in one binary (terminal + desktop). The wedge is
+now real — parity remains on bodies/tests/chaining, and the two front-ends need
+to stay in lockstep (codegen + sync are GUI-only today).
 
 ---
 
@@ -38,16 +42,18 @@ keyboard-speed workflows and load testing.
 
 These are the things whose absence makes a Postman user bounce.
 
-- [ ] **Tab safety + session continuity** — make the new request-tab workflow safe
+- [ ] **Tab safety + session continuity** — make the request-tab workflow safe
       and durable before adding more tab features. **Effort: M.**
-  - [ ] Guard tree-click / `:tabnew` tab opens when the current editor is dirty,
-        or open in the background without replacing the dirty buffer. This fixes
-        the current risk of silently discarding edits when a clicked request is
-        not already open. **S.**
-  - [ ] Track per-tab dirty state and render a dirty marker on the tab label;
-        block or confirm closing/switching away from dirty tabs. **M.**
+  - [x] Guard tab opens against dirty buffers — done in both front-ends: the
+        TUI guards opening into the current tab; the GUI opens every request
+        in its own tab (focus-if-open, Bruno-style), so nothing is clobbered.
+  - [x] Per-tab dirty state with a marker on the tab label and a confirm on
+        closing a dirty tab — done in TUI (`●` in the tabline) and GUI
+        (dirty dot, styled confirm dialog).
   - [ ] Persist/restore open tabs, active tab, tree expansion, tree visibility,
         and active saved request under the Volley config directory. **S–M.**
+        _One state file should also cover the GUI's tabs and the active
+        environment (see Environments follow-up)._
 
 - [x] **Auth helpers** — done: a request-level `model.Auth` (Bearer / Basic /
       API-key) materialized at send time by `Request.ApplyAuth` into the right
@@ -59,50 +65,34 @@ These are the things whose absence makes a Postman user bounce.
       toward unsaved-changes detection. Injected header is appended last so it
       overrides a hand-written one. Tested at the model, vars, storage, and
       component levels. _Follow-up: OAuth2 flows are out of scope for now._
-- [ ] **Named environments and reusable variables** — persistent dev/staging/prod
-      variable sets that switch instantly. **Why:** repeated base URLs, tenant
-      IDs, tokens, and test accounts should not need to be re-entered for every
-      API-testing session. **Effort: M.**
-  - **Current baseline:** `internal/vars.Store` provides unnamed, in-memory
-    `:set name=value` overrides and falls back to process environment variables;
-    `vars.Unresolved` already warns about unbound `{{name}}` placeholders.
-  - [ ] Introduce a resolver with explicit precedence: session `:set` override →
-        active named environment → future collection/global scopes → process
-        environment. Keep unknown placeholders unchanged and report their names,
-        never resolved values. **S.**
-  - [ ] Add a versioned environment DTO and atomic store under
-        `~/.config/volley/environments/<name>.json`; validate names against
-        absolute/traversal paths, use `0600` files, and tolerate one corrupt file
-        without hiding the other environments. **S–M.**
-  - [ ] Add commands: `:env` (show current), `:env <name>` (switch), `:envlist`,
-        `:envnew <name>`, `:envset name=value`, `:envunset <variable>`, and
-        `:envdelete <name>` with confirmation. Keep `:set` as a non-persistent
-        session override and add a way to clear overrides. **M.**
-  - [ ] Add Tab completion for environment names and variable names, plus
-        Up/Down command-history compatibility for the new commands. **S.**
-        _Foundation done: the command line already Tab-completes verbs, saved
-        request/group names, load profile names, and methods
-        (`completeCommand`/`argCandidates` in `commandline.go`) — env names
-        slot in as one more `argCandidates` case._
-  - [ ] Show the active environment in the persistent status/tab area and show
-        variable names in an environment inspector; mask values marked sensitive
-        and never place resolved secrets in status messages. **M.**
-  - [ ] Persist the selected environment in session/config state, but resolve
-        and freeze a request—including load-test workers—when Send/TEST starts so
-        switching environments mid-flight cannot change an active run. **S.**
-  - [ ] Define safe secret behavior for the MVP: local environment files are
-        private (`0600`) and outside collections, sensitive fields are masked,
-        and exports omit them by default. OS environment references remain the
-        recommended option until the dedicated secrets-management feature lands.
-        **S–M.**
-  - [ ] Cover precedence, switching, persistence/legacy loading, corrupt files,
-        masking, unresolved warnings, auth/query/body expansion, completion, and
-        frozen normal/load-test requests with unit and TUI integration tests.
-        **M.**
-  - **Acceptance:** after `:env dev`, every `{{name}}` resolves consistently in
-    URL, headers, query, body, and auth; restarting Volley restores the selected
-    environment; `:set` can temporarily override it; changing environments does
-    not mutate an in-flight request or load test.
+- [x] **Named environments and reusable variables** — done (2026-07-19/20),
+      in both front-ends. `vars.Layered` resolves session `:set` → active
+      environment → process env, leaving unknown placeholders visible;
+      `vars.EnvStore` keeps flat JSON files under `environments/` (`0600`,
+      traversal-safe names, corrupt files skipped). TUI: `:env` /
+      `:env <name>` / `:env off` / `:envnew` / `:envedit` ($EDITOR) /
+      `:envrm`, Tab completion, active-env chip in the status bar, bare
+      `:set` lists variable *names* only. GUI: env selector in the sidebar,
+      masked key/value editor (JSON as an advanced toggle), save-activates.
+      In-flight requests and load tests are frozen by construction — the
+      request is built once at Send/TEST time. Remaining follow-ups:
+  - [ ] Persist the selected environment across restarts (fold into the
+        session-state file above). **S.**
+  - [ ] `:envset name=value` / `:envunset` for quick edits without the
+        $EDITOR round-trip. **S.**
+  - [ ] Collection/global variable scopes between environment and OS env. **M.**
+- [ ] **Front-end parity debt (TUI catch-up)** — the desktop app (Wails,
+      `gui/`, shipped 2026-07-19/20 with tabs, themes, graphical shape editor,
+      results browser) grew two features the TUI lacks. Keep the two front-ends
+      in lockstep — shared logic belongs in `internal/`. **Effort: M.**
+  - [ ] `:codegen curl|wget|httpie` — `internal/codegen` already exists; wire
+        a command that copies to the clipboard (generalizes `:copy curl`). **S.**
+  - [ ] `:sync` — extract `gui/sync.go` into `internal/gitsync` (config dir as
+        a git repo, commit → pull --rebase → push, `environments/` and
+        `loadresults/` gitignored) and call it from both front-ends. **S–M.**
+  - [ ] `:loadresults` / `:loadcompare` (see Load testing). **M.**
+  - [ ] GUI response search (the TUI's `/` `n/N`). **S–M.**
+
 - [ ] **Body types + auto Content-Type** — pick a body mode: raw (JSON/text/XML),
       `x-www-form-urlencoded`, `multipart/form-data` (with file fields), and
       GraphQL (query + variables). Auto-set `Content-Type` unless overridden.
@@ -124,27 +114,27 @@ These are the things whose absence makes a Postman user bounce.
 
 Where a Vim TUI can feel *faster* than the GUIs.
 
-- [ ] **Load testing (the roadmap headline)** — reuse `httpx` (already
-      UI-agnostic) behind a `loadx` package. Concrete sub-tasks:
-  - [ ] Shared `http.Transport` with tuned `MaxIdleConnsPerHost` (a fresh
-        `http.Client` per request won't scale — flagged in review). **S.**
-  - [ ] Run config: concurrency, duration **or** N requests, target RPS. **M.**
-  - [ ] Live TUI dashboard: RPS, in-flight, latency p50/p90/p99, status
-        histogram, error rate, sparkline. **L.**
-  - [x] Summary report + export — done (2026-07-19): finished runs print a
-        k6-style analysis (`loadtest.Summary.Render`) in the results view and
-        auto-save as JSON under `loadresults/<profile>-<timestamp>.json`
-        (`loadtest.ResultStore`, with `List`/`Latest` ready for comparison).
-        _Remaining: CSV export and an HTML CI artifact if ever needed._
-  - [ ] **Generate load test from the current request** — capstone: take the
-        open/saved `model.Request` and hand it to `loadx` (`:load` /
-        `:loadtest`). Turns the API client and the load tester into one
-        workflow instead of two features. **S** (once the MVP exists).
-  - [ ] **Load-test comparison mode** — diff two runs (latency p50/p90/p99, RPS,
-        error-rate deltas) to answer "did my change regress p99?". **M.**
-  - **Why:** neither Postman nor Bruno does this; k6/vegeta aren't interactive.
-        This is Volley's signature feature — and generate-from-request +
-        comparison are what make it a *workflow*, not just a dashboard.
+- [x] **Load testing (the roadmap headline)** — shipped: `internal/loadtest`
+      engine with shaped RPS profiles, worker cap, and drop accounting.
+  - [x] Shared `http.Transport` with tuned `MaxIdleConnsPerHost`
+        (`httpx.sharedClient` + `DoLoad`).
+  - [x] Run config via editable load-shape profiles (constant / ramp / spike /
+        step / sawtooth + user shapes; `maxRequests`, `maxWorkers`).
+  - [x] Live dashboard in both front-ends: counters, achieved-vs-target RPS,
+        p50/p90/p95/p99/max, sparkline charts (TUI) / SVG charts (GUI).
+  - [x] Summary report + export: k6-style analysis auto-saved under
+        `loadresults/`. _Remaining: CSV export / HTML CI artifact if needed._
+  - [x] Generate load test from the current request — TEST / `:loadtest` runs
+        the open request through the picked profile after a confirm step.
+  - [x] Shape editing: TUI key-driven shape editor; GUI drag-the-points
+        editor with raw-JSON toggle.
+  - [x] **Load-test comparison** — GUI results browser (history in the load
+        panel): runs filterable by profile, p99 trend across runs, and a
+        delta line vs the previous run of the same profile.
+  - [ ] TUI equivalent: `:loadresults` / `:loadcompare` over the same
+        `ResultStore` data. **M.**
+  - **Why:** neither Postman nor Bruno does this; k6/vegeta aren't
+        interactive. This is Volley's signature feature — shipped.
 - [x] **Numbered pane jump (` ,g`)** — EasyMotion-style focus hints over the
       panes; press the shown number to jump directly. **Effort: S.**
 - [ ] **Fuzzy quick-open / command palette (`ctrl+p`)** — Telescope-style
@@ -224,11 +214,16 @@ Where a Vim TUI can feel *faster* than the GUIs.
       requests are easier in a real editor. **Effort: M.**
 - [ ] **Import/export & code-gen** — OpenAPI → collection, Postman/Insomnia/Bruno
       import, and `.http`/`.rest` (VS Code REST Client) read/write — the last is
-      very git-diff-friendly and popular. Code generation to curl/httpie/fetch.
-      **Why:** onboarding from existing tools. **Effort: L.**
+      very git-diff-friendly and popular. _Partial: code generation to
+      curl/wget/httpie shipped (`internal/codegen`, GUI `</>` button); fetch/Go
+      snippets and the import side remain._ **Why:** onboarding from existing
+      tools. **Effort: L.**
 - [ ] **Secrets management** — `.env`-style secret vars, masked in the UI, kept
-      out of committed collection files (`.gitignore`d). **Why:** Bruno secrets;
-      avoids leaking tokens into git. **Effort: M.**
+      out of committed collection files (`.gitignore`d). _Partial: environment
+      files are `0600`, values are masked in the GUI editor, bare `:set` lists
+      names only, and git sync gitignores `environments/` by default. Remaining:
+      per-variable sensitive marking and export scrubbing._ **Why:** Bruno
+      secrets; avoids leaking tokens into git. **Effort: M.**
 - [ ] **Network options** — per-request/global redirect follow toggle + redirect
       chain view, `--insecure` TLS, client certs, and proxy support. **Why:**
       Postman request settings. **Effort: M.**
@@ -283,15 +278,20 @@ aren't re-litigated:
 
 ## Suggested near-term order
 
-1. **curl import/export** (S–M) — instant, visible win; low risk.
-2. **Auth helpers** (M) — removes the most common daily friction.
-3. **Environments + persisted/scoped variables** (M) — unlocks real multi-stage
-   workflows and is prerequisite for extraction/chaining.
-4. **Value extraction / chaining** (M) — turns Volley into a workflow tool.
-5. **Load testing MVP** (L) — the differentiator; start with the shared
-   transport + run config, then the live dashboard.
+_(curl, auth, environments, and the load-testing MVP from the original list
+have all shipped — in both front-ends where applicable.)_
 
-> Rule of thumb: reach **parity** on P0 (auth, envs, bodies, curl) so Volley is
-> *sufficient* for daily use, then pour effort into the **load tester** and
-> **keyboard-speed** workflows (fuzzy open, chaining, CLI runner) that no GUI
-> can match.
+1. **TUI catch-up** (M) — `:codegen`, `:sync` (extract `internal/gitsync`),
+   `:loadresults`/`:loadcompare`; keeps the two-front-end promise honest.
+2. **Session persistence** (S–M) — one state file for open tabs, tree state,
+   and the active environment, shared by both apps.
+3. **Value extraction / chaining** (M) — turns Volley into a workflow tool;
+   environments (its prerequisite) now exist.
+4. **Body types + auto Content-Type** (L) — the last "Postman user bounces"
+   parity gap.
+5. **Request history** (M) — cheap now that the results browser set the
+   pattern for browsing stored run data.
+
+> Rule of thumb: whatever ships next, ship it in **both front-ends** (logic in
+> `internal/`), then keep differentiating on load testing and keyboard-speed
+> workflows (fuzzy open, chaining, CLI runner) that no GUI can match.
