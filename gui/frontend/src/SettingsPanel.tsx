@@ -11,17 +11,13 @@ import {
   type Density,
 } from "./appearance";
 import { Modal } from "./ui";
+import { LOCALES, useI18n, useT, type Locale } from "./i18n";
 import VarsSection from "./VarsPanel";
 import type { EnvState } from "./api";
 
-type SectionID = "appearance" | "interface" | "variables" | "sync";
+type SectionID = "appearance" | "interface" | "language" | "variables" | "sync";
 
-const SECTIONS: { id: SectionID; label: string; blurb: string }[] = [
-  { id: "appearance", label: "Appearance", blurb: "Color theme" },
-  { id: "interface", label: "Interface", blurb: "Density and text size" },
-  { id: "variables", label: "Variables", blurb: "Environments and overrides" },
-  { id: "sync", label: "Sync", blurb: "Git remote" },
-];
+const SECTION_IDS: SectionID[] = ["appearance", "interface", "language", "variables", "sync"];
 
 // radioNav implements the radio-group arrow-key contract: ←/↑ select the
 // previous option, →/↓ the next, wrapping. Selection follows focus, per the
@@ -72,14 +68,17 @@ export default function SettingsPanel({
   onNote: (s: string) => void;
   initialSection?: SectionID;
 }) {
+  const t = useT();
+  const { locale, setLocale } = useI18n();
   const [section, setSection] = useState<SectionID>(initialSection);
+  const sections = SECTION_IDS.map((id) => ({ id, label: t("set." + id), blurb: t(`set.${id}Blurb`) }));
   const patch = (next: Partial<Appearance>) => onChange((current) => ({ ...current, ...next }));
 
   return (
-    <Modal title="Settings" onClose={onClose} wide>
+    <Modal title={t("set.title")} onClose={onClose} wide>
       <div className="settings-layout">
-        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="settings sections">
-          {SECTIONS.map((s) => (
+        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label={t("set.sections")}>
+          {sections.map((s) => (
             <button
               key={s.id}
               id={`settings-tab-${s.id}`}
@@ -89,7 +88,7 @@ export default function SettingsPanel({
               tabIndex={section === s.id ? 0 : -1}
               className={"settings-navitem" + (section === s.id ? " active" : "")}
               onClick={() => setSection(s.id)}
-              onKeyDown={(e) => tablistNav(e, SECTIONS.map((x) => x.id), section, setSection)}
+              onKeyDown={(e) => tablistNav(e, SECTION_IDS, section, setSection)}
             >
               <b>{s.label}</b>
               <small>{s.blurb}</small>
@@ -109,12 +108,12 @@ export default function SettingsPanel({
             <section className="settings-section" aria-labelledby="theme-heading">
               <div className="settings-heading">
                 <div>
-                  <h3 id="theme-heading">Color theme</h3>
-                  <p>Choose a palette that fits your workspace.</p>
+                  <h3 id="theme-heading">{t("set.theme")}</h3>
+                  <p>{t("set.themeHelp")}</p>
                 </div>
-                <span className="setting-badge">Saved automatically</span>
+                <span className="setting-badge">{t("set.autosaved")}</span>
               </div>
-              <div className="theme-grid" role="radiogroup" aria-label="Color theme">
+              <div className="theme-grid" role="radiogroup" aria-label={t("set.theme")}>
                 {THEMES.map((theme) => (
                   <button
                     key={theme.id}
@@ -141,8 +140,8 @@ export default function SettingsPanel({
                 ))}
               </div>
               <div className="settings-footer">
-                <p>Appearance settings stay on this device.</p>
-                <button className="mini" onClick={() => onChange(DEFAULT_APPEARANCE)}>Reset appearance</button>
+                <p>{t("set.local")}</p>
+                <button className="mini" onClick={() => onChange(DEFAULT_APPEARANCE)}>{t("set.reset")}</button>
               </div>
             </section>
           </div>
@@ -155,26 +154,60 @@ export default function SettingsPanel({
           >
             <section className="settings-section split-settings">
               <SettingChoice<Density>
-                title="Interface density"
-                description="Adjust spacing throughout the workspace."
+                title={t("set.density")}
+                description={t("set.densityHelp")}
                 value={appearance.density}
                 choices={[
-                  ["comfortable", "Comfortable"],
-                  ["compact", "Compact"],
+                  ["comfortable", t("set.comfortable")],
+                  ["compact", t("set.compact")],
                 ]}
                 onChange={(density) => patch({ density })}
               />
               <SettingChoice<CodeSize>
-                title="Editor text"
-                description="Set the size of request and response text."
+                title={t("set.codeSize")}
+                description={t("set.codeSizeHelp")}
                 value={appearance.codeSize}
                 choices={[
-                  ["small", "Small"],
-                  ["medium", "Medium"],
-                  ["large", "Large"],
+                  ["small", t("set.small")],
+                  ["medium", t("set.medium")],
+                  ["large", t("set.large")],
                 ]}
                 onChange={(codeSize) => patch({ codeSize })}
               />
+            </section>
+          </div>
+
+          <div
+            id="settings-panel-language"
+            role="tabpanel"
+            aria-labelledby="settings-tab-language"
+            hidden={section !== "language"}
+          >
+            <section className="settings-section">
+              <div className="settings-heading">
+                <div>
+                  <h3>{t("set.language")}</h3>
+                  <p>{t("set.langHelp")}</p>
+                </div>
+              </div>
+              <div className="lang-grid" role="radiogroup" aria-label={t("set.language")}>
+                {LOCALES.map((l) => (
+                  <button
+                    key={l.id}
+                    role="radio"
+                    aria-checked={locale === l.id}
+                    tabIndex={locale === l.id ? 0 : -1}
+                    className={"lang-card" + (locale === l.id ? " active" : "")}
+                    onClick={() => setLocale(l.id)}
+                    onKeyDown={(e) =>
+                      radioNav(e, LOCALES.map((x) => x.id), locale, (id) => setLocale(id as Locale))
+                    }
+                  >
+                    <b>{l.label}</b>
+                    <small>{l.english}</small>
+                  </button>
+                ))}
+              </div>
             </section>
           </div>
 
@@ -205,6 +238,7 @@ export default function SettingsPanel({
 // (Bruno-style). Push auth rides on the user's existing git credentials;
 // environments/ (tokens) and loadresults/ are gitignored by default.
 function SyncSection() {
+  const t = useT();
   const [st, setSt] = useState<SyncState | null>(null);
   const [remote, setRemote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -224,7 +258,7 @@ function SyncSection() {
     setMsg("");
     try {
       setSt(await api.SyncSetup(remote));
-      setMsg("sync configured");
+      setMsg(t("set.syncConfigured"));
     } catch (e) {
       setMsg(String(e));
     } finally {
@@ -234,10 +268,10 @@ function SyncSection() {
 
   const syncNow = async () => {
     setBusy(true);
-    setMsg("syncing…");
+    setMsg(t("note.syncing"));
     try {
       const report = await api.SyncNow();
-      setMsg(report.detail || (report.committed ? "changes committed" : "nothing to sync"));
+      setMsg(report.detail || (report.committed ? t("note.committed") : t("note.nothingToSync")));
       refresh();
     } catch (e) {
       setMsg(String(e));
@@ -250,38 +284,37 @@ function SyncSection() {
     <section className="settings-section" aria-labelledby="sync-heading">
       <div className="settings-heading">
         <div>
-          <h3 id="sync-heading">Sync (git)</h3>
-          <p>Push collections and load profiles to a repo you own — GitHub, or any git remote.</p>
+          <h3 id="sync-heading">{t("set.syncHeading")}</h3>
+          <p>{t("set.syncHelp")}</p>
         </div>
         {st?.configured && (
           <span className="setting-badge">
             {st.branch}
-            {st.dirty > 0 ? ` · ${st.dirty} changed` : " · clean"}
+            {st.dirty > 0 ? ` · ${t("set.changed", { n: st.dirty })}` : ` · ${t("set.clean")}`}
           </span>
         )}
       </div>
       {st !== null && !st.gitInstalled ? (
-        <p className="hint">git is not installed (or not on PATH) — install it to enable sync.</p>
+        <p className="hint">{t("set.syncNoGit")}</p>
       ) : (
         <>
           <div className="sync-row">
             <input
               className="mono"
               placeholder="git@github.com:you/volley-collections.git"
-              aria-label="git remote URL"
+              aria-label={t("set.syncRemote")}
               value={remote}
               onChange={(e) => setRemote(e.target.value)}
             />
             <button className="mini" disabled={busy} onClick={setup}>
-              {st?.configured ? "Update remote" : "Set up"}
+              {st?.configured ? t("set.syncUpdate") : t("set.syncSetup")}
             </button>
             <button className="primary" disabled={busy || !st?.configured} onClick={syncNow}>
-              Sync now
+              {t("set.syncNow")}
             </button>
           </div>
           <p className="hint">
-            Secrets stay local: environments/ and loadresults/ are gitignored. Pushing uses your normal git
-            credentials.
+            {t("set.syncSecrets")}
           </p>
         </>
       )}

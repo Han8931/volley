@@ -3,6 +3,7 @@
 // appConfirm from anywhere; DialogHost (mounted once in App) renders them.
 
 import { useEffect, useRef, useState } from "react";
+import { useT } from "./i18n";
 import { Modal } from "./ui";
 
 interface PromptReq {
@@ -69,6 +70,7 @@ export function DialogHost() {
 }
 
 function ConfirmView({ req, done }: { req: ConfirmReq; done: () => void }) {
+  const t = useT();
   const answer = (ok: boolean) => {
     req.resolve(ok);
     done();
@@ -78,15 +80,16 @@ function ConfirmView({ req, done }: { req: ConfirmReq; done: () => void }) {
       {req.body && <p className="dialog-body">{req.body}</p>}
       <div className="row-buttons">
         <button className={req.danger ? "danger-solid" : "primary"} autoFocus onClick={() => answer(true)}>
-          {req.danger ? "delete" : "OK"}
+          {req.danger ? t("dlg.delete") : t("dlg.ok")}
         </button>
-        <button onClick={() => answer(false)}>cancel</button>
+        <button onClick={() => answer(false)}>{t("dlg.cancel")}</button>
       </div>
     </Modal>
   );
 }
 
 function PromptView({ req, done }: { req: PromptReq; done: () => void }) {
+  const t = useT();
   const [value, setValue] = useState(req.initial ?? "");
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.select(), []);
@@ -113,9 +116,9 @@ function PromptView({ req, done }: { req: PromptReq; done: () => void }) {
       />
       <div className="row-buttons">
         <button className="primary" onClick={() => answer(value)}>
-          OK
+          {t("dlg.ok")}
         </button>
-        <button onClick={() => answer(null)}>cancel</button>
+        <button onClick={() => answer(null)}>{t("dlg.cancel")}</button>
       </div>
     </Modal>
   );

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatDuration, unitFor, type LoadRun, type Profile, type RequestDef } from "./api";
 import { IconCopy } from "./icons";
+import { useT } from "./i18n";
 import { appConfirm, appPrompt } from "./dialogs";
 import ResultsView from "./ResultsView";
 import ShapeEditor from "./ShapeEditor";
@@ -24,6 +25,7 @@ export default function LoadWorkspace({
   onClose: () => void; // back to the request workspace
   onNote: (s: string) => void;
 }) {
+  const t = useT();
   const [stage, setStage] = useState<Stage>("picker");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [sel, setSel] = useState(0);
@@ -92,7 +94,7 @@ export default function LoadWorkspace({
 
   const close = async () => {
     if (run && !run.done && stage === "run") {
-      if (!(await appConfirm("Stop the load test?", { body: "A run is still in progress." }))) return;
+      if (!(await appConfirm(t("load.stopConfirm"), { body: t("load.stopConfirmBody") }))) return;
       await api.StopLoadTest();
     }
     if (run?.done) await api.DismissLoadTest();
@@ -108,11 +110,11 @@ export default function LoadWorkspace({
   return (
     <section className="load-workspace">
       <header className="load-header">
-        <nav className="load-nav" role="tablist" aria-label="load test views">
+        <nav className="load-nav" role="tablist" aria-label={t("load.views")}>
           {([
-            ["profiles", "Profiles"],
-            ["run", "Live run"],
-            ["results", "Results"],
+            ["profiles", t("load.profiles")],
+            ["run", t("load.liveRun")],
+            ["results", t("load.results")],
           ] as const).map(([id, label]) => (
             <button
               key={id}
@@ -121,7 +123,7 @@ export default function LoadWorkspace({
               tabIndex={view === id ? 0 : -1}
               className={"load-navitem" + (view === id ? " active" : "")}
               disabled={id === "run" && !run?.running}
-              title={id === "run" && !run?.running ? "no run in progress" : undefined}
+              title={id === "run" && !run?.running ? t("load.noRun") : undefined}
               onClick={() => setStage(id === "profiles" ? "picker" : id)}
             >
               {label}
@@ -130,13 +132,13 @@ export default function LoadWorkspace({
           ))}
         </nav>
         <button className="mini" onClick={close}>
-          Back to request
+          {t("load.back")}
         </button>
       </header>
 
       {stage === "picker" && (
         <div className="load-picker">
-          <div className="profile-list" role="listbox" aria-label="load profiles">
+          <div className="profile-list" role="listbox" aria-label={t("load.profileList")}>
             {profiles.map((pr, i) => (
               <button
                 key={pr.name}
@@ -153,19 +155,19 @@ export default function LoadWorkspace({
               </button>
             ))}
             <div className="profile-actions">
-              <button className="mini" onClick={() => setStage("results")} title="past runs and p99 trend">
-                History
+              <button className="mini" onClick={() => setStage("results")} title={t("load.historyTitle")}>
+                {t("load.history")}
               </button>
               <button
                 className="mini"
                 onClick={async () => {
-                  const name = await appPrompt("New load profile", {
-                    label: "Profile name — starts from the selected shape",
+                  const name = await appPrompt(t("load.newProfile"), {
+                    label: t("load.newProfileLabel"),
                     placeholder: "my-spike",
                   });
                   if (!name) return;
                   if (profiles.some((x) => x.name === name)) {
-                    onNote(`${name} already exists — select it and press edit`);
+                    onNote(t("load.exists", { name }));
                     return;
                   }
                   setEditName(name);
@@ -173,7 +175,7 @@ export default function LoadWorkspace({
                   setStage("edit");
                 }}
               >
-                New
+                {t("load.new")}
               </button>
               {p && (
                 <>
@@ -185,18 +187,18 @@ export default function LoadWorkspace({
                       setStage("edit");
                     }}
                   >
-                    Edit shape
+                    {t("load.editShape")}
                   </button>
                   <button
                     className="mini danger push-right"
                     onClick={async () => {
-                      if (await appConfirm(`Delete profile ${p.name}?`, { danger: true })) {
+                      if (await appConfirm(t("load.deleteProfile", { name: p.name }), { danger: true })) {
                         await api.DeleteProfile(p.name);
                         refresh();
                       }
                     }}
                   >
-                    Delete
+                    {t("load.delete")}
                   </button>
                 </>
               )}
@@ -207,26 +209,25 @@ export default function LoadWorkspace({
               <>
                 <ShapeChart points={p.points} durationMs={p.durationMs} peakRps={p.peakRps} showLegend={false} />
                 <div className="p-meta">
-                  peak {p.peakRps} {unitFor(p.mode).short} · {formatDuration(p.durationMs)}
+                  {t("load.peak")} {p.peakRps} {unitFor(p.mode).short} · {formatDuration(p.durationMs)}
                   {p.mode === "users"
                     ? p.thinkTimeMs
-                      ? ` · ${formatDuration(p.thinkTimeMs)} think time`
-                      : " · no think time"
-                    : ` · ${p.planned} req total`}
-                  {p.maxWorkers ? ` · ≤${p.maxWorkers} workers` : ""}
+                      ? ` · ${t("load.thinkTime", { d: formatDuration(p.thinkTimeMs) })}`
+                      : ` · ${t("load.noThink")}`
+                    : ` · ${t("load.reqTotal", { n: p.planned })}`}
+                  {p.maxWorkers ? ` · ${t("load.workers", { n: p.maxWorkers })}` : ""}
                 </div>
                 <button
                   className="primary"
                   disabled={!hasURL}
-                  title={hasURL ? undefined : "the open request has no URL yet"}
+                  title={hasURL ? undefined : t("load.noURL")}
                   onClick={() => setStage("confirm")}
                 >
-                  Run this profile
+                  {t("load.run")}
                 </button>
                 {!hasURL && (
                   <p className="hint">
-                    Add a URL to the open request to run this profile — browsing profiles and history needs no
-                    request.
+                    {t("load.noURLHelp")}
                   </p>
                 )}
               </>
@@ -265,14 +266,14 @@ export default function LoadWorkspace({
             )}
           </p>
           <p className="target">
-            against <span className="mono">{req.method} {targetUrl}</span>
+            {t("load.against")} <span className="mono">{req.method} {targetUrl}</span>
           </p>
-          <p className="hint">A spike aimed at the wrong URL is the classic load-testing footgun.</p>
+          <p className="hint">{t("load.footgun")}</p>
           <div className="row-buttons">
             <button className="primary" onClick={start}>
-              Fire
+              {t("load.fire")}
             </button>
-            <button onClick={() => setStage("picker")}>Back</button>
+            <button onClick={() => setStage("picker")}>{t("load.backStep")}</button>
           </div>
         </div>
       )}
@@ -308,17 +309,18 @@ function RunView({
   onNote: (s: string) => void;
   onResults: () => void;
 }) {
-  if (!run || !run.running) return <div className="load-run">starting…</div>;
+  const t = useT();
+  if (!run || !run.running) return <div className="load-run">{t("load.starting")}</div>;
 
   const p = run.profile;
   const frac = p.durationMs > 0 ? Math.min(1, run.elapsedMs / p.durationMs) : 0;
-  const stateLabel = run.done ? (run.stopped ? "stopped" : "done") : "running";
+  const stateKey = run.done ? (run.stopped ? "stopped" : "done") : "running";
 
   return (
     <div className="load-run">
       <div className="run-head">
         <span className="p-name">{p.name}</span>
-        <span className={"run-state " + stateLabel}>{stateLabel}</span>
+        <span className={"run-state " + stateKey}>{t("load." + stateKey)}</span>
         <span className="p-meta">
           {formatDuration(run.elapsedMs) || "0s"} / {formatDuration(p.durationMs)}
         </span>
@@ -328,11 +330,11 @@ function RunView({
             onClick={() => {
               navigator.clipboard
                 .writeText(run.summaryText!)
-                .then(() => onNote("copied run analysis to clipboard"))
-                .catch(() => onNote("clipboard unavailable"));
+                .then(() => onNote(t("note.copiedAnalysis")))
+                .catch(() => onNote(t("note.clipboard")));
             }}
           >
-            <IconCopy /> Copy analysis
+            <IconCopy /> {t("load.copyAnalysis")}
           </button>
         )}
       </div>
@@ -354,21 +356,21 @@ function RunView({
       ) : (
         <div className="counters">
           <span>
-            ok <b className="ok">{run.ok}</b>
+            {t("load.ok")} <b className="ok">{run.ok}</b>
           </span>
           <span>
-            err <b className={run.errors > 0 ? "err" : ""}>{run.errors}</b>
+            {t("load.err")} <b className={run.errors > 0 ? "err" : ""}>{run.errors}</b>
           </span>
           <span>
-            cancel <b>{run.canceled}</b>
+            {t("load.cancel")} <b>{run.canceled}</b>
           </span>
           {run.mode !== "users" && (
             <span>
-              drop <b className={run.dropped > 0 ? "warn" : ""}>{run.dropped}</b>
+              {t("load.drop")} <b className={run.dropped > 0 ? "warn" : ""}>{run.dropped}</b>
             </span>
           )}
           <span>
-            {run.mode === "users" ? "active users" : "in-flight"}{" "}
+            {t(run.mode === "users" ? "load.activeUsers" : "load.inFlight")}{" "}
             <b>
               {run.inFlight}/{run.mode === "users" ? Math.round(run.targetNowRps) : run.maxWorkers}
             </b>
@@ -376,11 +378,11 @@ function RunView({
           <span>
             {run.mode === "users" ? (
               <>
-                throughput <b>{run.achievedRps.toFixed(1)}</b> rps
+                {t("load.throughput")} <b>{run.achievedRps.toFixed(1)}</b> {t("load.rps")}
               </>
             ) : (
               <>
-                rps <b>{run.achievedRps.toFixed(1)}</b> achieved · <b>{run.targetNowRps.toFixed(1)}</b> target now
+                {t("load.rps")} <b>{run.achievedRps.toFixed(1)}</b> {t("load.achieved")} · <b>{run.targetNowRps.toFixed(1)}</b> {t("load.targetNow")}
               </>
             )}
           </span>
@@ -400,27 +402,27 @@ function RunView({
           progress={run.done ? undefined : frac}
           showLegend
         />
-        <div className="chart-label">latency, mean per second · max {run.maxMs.toFixed(0)}ms</div>
+        <div className="chart-label">{t("load.latencyLabel", { max: run.maxMs.toFixed(0) })}</div>
         <LatencyChart values={run.buckets.map((b) => b.meanLatencyMs)} durationMs={p.durationMs} />
       </div>
 
-      {run.savedAs && <div className="hint">saved {run.savedAs}</div>}
-      {run.saveError && <div className="hint err">save failed: {run.saveError}</div>}
+      {run.savedAs && <div className="hint">{t("load.savedAs", { name: run.savedAs })}</div>}
+      {run.saveError && <div className="hint err">{t("load.saveFailed", { err: run.saveError })}</div>}
 
       <div className="row-buttons">
         {run.done ? (
           <>
             <button className="primary" onClick={onRerun}>
-              Run again
+              {t("load.runAgain")}
             </button>
             <button className="mini" onClick={onResults}>
-              History
+              {t("load.history")}
             </button>
-            <button onClick={onClose}>Close</button>
+            <button onClick={onClose}>{t("load.close")}</button>
           </>
         ) : (
           <button className="danger" onClick={onStop}>
-            Stop
+            {t("load.stop")}
           </button>
         )}
       </div>

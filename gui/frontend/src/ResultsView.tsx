@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatDuration, unitFor, type RunResult } from "./api";
 import { IconCopy } from "./icons";
 import { appConfirm } from "./dialogs";
+import { useT } from "./i18n";
 import { LatencyChart } from "./ui";
 
 export default function ResultsView({
@@ -16,6 +17,7 @@ export default function ResultsView({
   onBack: () => void;
   onNote: (s: string) => void;
 }) {
+  const t = useT();
   const [results, setResults] = useState<RunResult[]>([]);
   const [profile, setProfile] = useState<string>(""); // "" = all
   const [sel, setSel] = useState(0);
@@ -56,7 +58,7 @@ export default function ResultsView({
   );
 
   const remove = async (r: RunResult) => {
-    if (!(await appConfirm(`Delete this ${r.profile} run?`, { danger: true }))) return;
+    if (!(await appConfirm(t("res.deleteConfirm", { profile: r.profile }), { danger: true }))) return;
     try {
       await api.DeleteResult(r.file);
       refresh();
@@ -68,9 +70,9 @@ export default function ResultsView({
   if (results.length === 0) {
     return (
       <div className="results-view">
-        <p className="hint">No saved runs yet — every finished load test lands here automatically.</p>
+        <p className="hint">{t("res.empty")}</p>
         <div className="row-buttons">
-          <button onClick={onBack}>Back</button>
+          <button onClick={onBack}>{t("res.back")}</button>
         </div>
       </div>
     );
@@ -79,40 +81,38 @@ export default function ResultsView({
   return (
     <div className="results-view">
       <div className="results-bar">
-        <select aria-label="filter by profile" value={profile} onChange={(e) => { setProfile(e.target.value); setSel(0); }}>
-          <option value="">all profiles</option>
+        <select aria-label={t("res.filter")} value={profile} onChange={(e) => { setProfile(e.target.value); setSel(0); }}>
+          <option value="">{t("res.allProfiles")}</option>
           {profiles.map((p) => (
             <option key={p} value={p}>
               {p}
             </option>
           ))}
         </select>
-        <span className="hint">
-          {filtered.length} run{filtered.length === 1 ? "" : "s"}
-        </span>
+        <span className="hint">{t(filtered.length === 1 ? "res.run" : "res.runs", { n: filtered.length })}</span>
       </div>
 
       {trend.length > 1 ? (
         <>
           <div className="chart-label">
-            {profile} · p99 per run (ms) · oldest → newest
+            {t("res.trend", { name: profile })}
           </div>
           <LatencyChart
             values={trend}
             durationMs={trend.length * 1000}
             height={54}
-            label={`${profile} p99 per run`}
+            label={t("res.trendLabel", { name: profile })}
           />
         </>
       ) : (
         profile === "" &&
         results.length > 1 && (
-          <p className="hint">Pick a profile to see its p99 trend across runs.</p>
+          <p className="hint">{t("res.pickProfile")}</p>
         )
       )}
 
       <div className="results-split">
-        <div className="results-list" role="listbox" aria-label="saved runs">
+        <div className="results-list" role="listbox" aria-label={t("res.savedRuns")}>
           {filtered.map((r, i) => (
             <button
               key={r.file}
@@ -139,7 +139,7 @@ export default function ResultsView({
             {previous && <DeltaLine current={current} previous={previous} />}
             <MetricCards r={current} previous={previous} />
             <details className="raw-report">
-              <summary>View full report</summary>
+              <summary>{t("res.viewReport")}</summary>
               <pre className="summary mono">{current.text}</pre>
             </details>
             <div className="row-buttons">
@@ -148,14 +148,14 @@ export default function ResultsView({
                 onClick={() =>
                   navigator.clipboard
                     .writeText(current.text)
-                    .then(() => onNote("copied run analysis"))
-                    .catch(() => onNote("clipboard unavailable"))
+                    .then(() => onNote(t("note.copiedAnalysis")))
+                    .catch(() => onNote(t("note.clipboard")))
                 }
               >
-                <IconCopy /> Copy
+                <IconCopy /> {t("res.copy")}
               </button>
               <button className="mini danger" onClick={() => remove(current)}>
-                Delete
+                {t("res.delete")}
               </button>
             </div>
           </div>
@@ -163,7 +163,7 @@ export default function ResultsView({
       </div>
 
       <div className="row-buttons">
-        <button onClick={onBack}>Back</button>
+        <button onClick={onBack}>{t("res.back")}</button>
       </div>
     </div>
   );
@@ -173,6 +173,7 @@ export default function ResultsView({
 // as data rather than as a terminal transcript; the raw report stays one
 // disclosure away.
 function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
+  const t = useT();
   const delta = (cur: number, prev: number | undefined, downIsGood: boolean) => {
     if (prev === undefined) return null;
     const diff = cur - prev;
@@ -187,7 +188,7 @@ function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
   };
   const cards: { label: string; value: string; delta?: React.ReactNode; tone?: string }[] = [
     {
-      label: "Throughput",
+      label: t("res.throughput"),
       value: `${r.achievedRps.toFixed(1)} rps`,
       delta: delta(r.achievedRps, previous?.achievedRps, false),
     },
@@ -195,13 +196,13 @@ function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
     { label: "p95", value: `${r.p95Ms.toFixed(0)} ms`, delta: delta(r.p95Ms, previous?.p95Ms, true) },
     { label: "p99", value: `${r.p99Ms.toFixed(0)} ms`, delta: delta(r.p99Ms, previous?.p99Ms, true) },
     {
-      label: "Failures",
+      label: t("res.failures"),
       value: `${r.errors} (${r.errorRate.toFixed(1)}%)`,
       tone: r.errors > 0 ? "bad" : "good",
       delta: delta(r.errorRate, previous?.errorRate, true),
     },
     {
-      label: r.mode === "users" ? "Peak users" : "Dropped",
+      label: t(r.mode === "users" ? "res.peakUsers" : "res.dropped"),
       value: r.mode === "users" ? `${r.peakRps.toFixed(0)}` : `${r.dropped}`,
       tone: r.mode !== "users" && r.dropped > 0 ? "bad" : undefined,
     },
@@ -211,9 +212,9 @@ function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
       <div className="result-head">
         <span className="mono">{r.method} {r.url}</span>
         <span className="hint">
-          {formatDuration(r.elapsedMs)} · {r.completed} completed · peak {r.peakRps.toFixed(0)}{" "}
-          {unitFor(r.mode).short}
-          {r.stopped ? " · stopped early" : ""}
+          {formatDuration(r.elapsedMs)} · {t("res.completed", { n: r.completed })} · {t("load.peak")}{" "}
+          {r.peakRps.toFixed(0)} {unitFor(r.mode).short}
+          {r.stopped ? ` · ${t("res.stoppedEarly")}` : ""}
         </span>
       </div>
       <div className="metric-cards">
@@ -234,6 +235,7 @@ function MetricCards({ r, previous }: { r: RunResult; previous?: RunResult }) {
 // DeltaLine is the one-glance regression check: this run against the
 // previous run of the same profile.
 function DeltaLine({ current, previous }: { current: RunResult; previous: RunResult }) {
+  const t = useT();
   const d = (cur: number, prev: number, unit: string, downIsGood: boolean) => {
     const diff = cur - prev;
     if (Math.abs(diff) < 0.05) return null;
@@ -248,7 +250,9 @@ function DeltaLine({ current, previous }: { current: RunResult; previous: RunRes
   };
   return (
     <div className="delta-line">
-      vs previous run ({formatDuration(Date.now() - new Date(previous.startedAt).getTime()) || "moments"} ago):
+      {t("res.vsPrevious", {
+        ago: formatDuration(Date.now() - new Date(previous.startedAt).getTime()) || t("res.moments"),
+      })}
       {" p99 "}
       {d(current.p99Ms, previous.p99Ms, "ms", true) ?? <span className="delta">±0</span>}
       {" · rps "}

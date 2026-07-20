@@ -33,6 +33,7 @@ import {
 import LoadWorkspace from "./LoadWorkspace";
 import SettingsPanel from "./SettingsPanel";
 import { useAppearance } from "./appearance";
+import { useT } from "./i18n";
 import { Modal } from "./ui";
 
 type ReqTab = "headers" | "query" | "body" | "auth";
@@ -69,6 +70,7 @@ const freshTab = (id: number, req = blankRequest(), name = ""): OpenTab => ({
 const tabDirty = (t: OpenTab) => JSON.stringify(t.req) !== t.baseline;
 
 export default function App() {
+  const t = useT();
   const [appearance, setAppearance] = useAppearance();
   const [tree, setTree] = useState<TreeItem[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -117,10 +119,10 @@ export default function App() {
   };
 
   const closeTab = async (i: number) => {
-    const t = tabs[i];
+    const tb = tabs[i];
     if (
-      tabDirty(t) &&
-      !(await appConfirm(`Close ${t.name || "this draft"}?`, { body: "The tab has unsaved edits." }))
+      tabDirty(tb) &&
+      !(await appConfirm(t("dlg.closeTab", { name: tb.name || t("dlg.thisDraft") }), { body: t("dlg.closeTabBody") }))
     ) {
       return;
     }
@@ -168,13 +170,13 @@ export default function App() {
   const save = async () => {
     const name =
       current ||
-      (await appPrompt("Save request", { label: "Name (groups by slash)", placeholder: "auth/login" })) ||
+      (await appPrompt(t("dlg.saveRequest"), { label: t("dlg.saveRequestLabel"), placeholder: "auth/login" })) ||
       "";
     if (!name) return;
     try {
       await api.SaveRequest(name, req);
       patchTab(active, { name, baseline: JSON.stringify(req) });
-      setNote(`saved ${name}`);
+      setNote(t("note.saved", { name }));
       refreshTree();
     } catch (e) {
       setNote(String(e));
@@ -183,12 +185,12 @@ export default function App() {
 
   const send = async () => {
     if (!req.url.trim()) {
-      setNote("URL is empty");
+      setNote(t("note.urlEmpty"));
       return;
     }
     const missing = await api.Unresolved(req).catch(() => []);
     if (missing.length > 0) {
-      setNote(`unresolved: ${missing.map((m) => `{{${m}}}`).join(" ")}`);
+      setNote(t("note.unresolved", { names: missing.map((m) => `{{${m}}}`).join(" ") }));
       return;
     }
     const id = activeTab.id; // the response lands on the tab it was sent from
@@ -224,11 +226,11 @@ export default function App() {
       const got = await api.ImportCurl(curlText);
       // Imported requests get their own tab as an unsaved draft (baseline is
       // blank, so the dirty dot shows until saved).
-      const t = freshTab(nextTabId.current++, got.request);
-      openTab({ ...t, baseline: JSON.stringify(blankRequest()) });
+      const draft = freshTab(nextTabId.current++, got.request);
+      openTab({ ...draft, baseline: JSON.stringify(blankRequest()) });
       setPanel("");
       setCurlText("");
-      setNote(got.warnings.length > 0 ? `imported with warnings: ${got.warnings.join(" · ")}` : "imported curl command");
+      setNote(got.warnings.length > 0 ? t("note.importedWarn", { warnings: got.warnings.join(" · ") }) : t("note.imported"));
     } catch (e) {
       setNote(String(e));
     }
@@ -242,14 +244,14 @@ export default function App() {
   const syncNow = async () => {
     const st = await api.SyncStatus();
     if (!st.configured) {
-      setNote("sync is not set up — configure it in Settings");
+      setNote(t("note.syncUnset"));
       openSettings("sync");
       return;
     }
-    setNote("syncing…");
+    setNote(t("note.syncing"));
     try {
       const report = await api.SyncNow();
-      setNote(report.detail || (report.committed ? "changes committed" : "nothing to sync"));
+      setNote(report.detail || (report.committed ? t("note.committed") : t("note.nothingToSync")));
     } catch (e) {
       setNote(String(e));
     }
@@ -257,7 +259,7 @@ export default function App() {
 
   // Tree CRUD, mirroring the TUI tree's m menu (add/rename/copy/delete).
   const renameItem = async (it: TreeItem) => {
-    const to = await appPrompt(`Rename ${it.isDir ? "group" : "request"}`, { initial: it.name });
+    const to = await appPrompt(t(it.isDir ? "dlg.renameGroup" : "dlg.renameRequest"), { initial: it.name });
     if (!to || to === it.name) return;
     try {
       await (it.isDir ? api.RenameGroup(it.name, to) : api.RenameRequest(it.name, to));
@@ -271,7 +273,7 @@ export default function App() {
   };
 
   const copyItem = async (it: TreeItem) => {
-    const to = await appPrompt("Copy request", { label: "Copy to", initial: it.name + "-copy" });
+    const to = await appPrompt(t("dlg.copyRequest"), { label: t("dlg.copyTo"), initial: it.name + "-copy" });
     if (!to) return;
     try {
       await api.CopyRequest(it.name, to);
@@ -282,7 +284,7 @@ export default function App() {
   };
 
   const deleteItem = async (it: TreeItem) => {
-    if (!(await appConfirm(`Delete ${it.isDir ? "group" : "request"} ${it.name}?`, { danger: true }))) return;
+    if (!(await appConfirm(t(it.isDir ? "dlg.deleteGroup" : "dlg.deleteRequest", { name: it.name }), { danger: true }))) return;
     try {
       await (it.isDir ? api.DeleteGroup(it.name) : api.DeleteRequest(it.name));
       // An open tab for a deleted request becomes an unsaved draft — its
@@ -301,7 +303,7 @@ export default function App() {
   };
 
   const newGroup = async () => {
-    const name = await appPrompt("New group", { label: "Group name", placeholder: "auth" });
+    const name = await appPrompt(t("dlg.newGroup"), { label: t("dlg.groupName"), placeholder: "auth" });
     if (!name) return;
     try {
       await api.CreateGroup(name);
@@ -376,20 +378,20 @@ export default function App() {
           <span className="brand-mark" aria-hidden="true">V</span>
           <span className="brand-copy">
             <b>Volley</b>
-            <small>API workspace</small>
+            <small>{t("app.workspace")}</small>
           </span>
         </div>
         {/* Collection-level actions. Creating a request lives on the tab
             strip's +, so it isn't repeated here. */}
-        <div className="tree-toolbar" role="toolbar" aria-label="collection actions">
-          <button onClick={newGroup} title="new group (folder)">
-            <IconFolder /> Group
+        <div className="tree-toolbar" role="toolbar" aria-label={t("side.actions")}>
+          <button onClick={newGroup} title={t("side.groupTitle")}>
+            <IconFolder /> {t("side.group")}
           </button>
-          <button onClick={refreshTree} title="reload collections from disk">
-            <IconRefresh /> Reload
+          <button onClick={refreshTree} title={t("side.reloadTitle")}>
+            <IconRefresh /> {t("side.reload")}
           </button>
-          <button onClick={syncNow} title="commit and push collections to your git remote">
-            <IconSync /> Sync
+          <button onClick={syncNow} title={t("side.syncTitle")}>
+            <IconSync /> {t("side.sync")}
           </button>
         </div>
         <div className="tree">
@@ -421,17 +423,17 @@ export default function App() {
                   </button>
                 )}
                 <span className="tree-actions">
-                  <button title={`rename ${it.name}`} aria-label={`rename ${it.name}`} onClick={() => renameItem(it)}>
+                  <button title={t("side.rename", { name: it.name })} aria-label={t("side.rename", { name: it.name })} onClick={() => renameItem(it)}>
                     <IconPencil />
                   </button>
                   {!it.isDir && (
-                    <button title={`copy ${it.name}`} aria-label={`copy ${it.name}`} onClick={() => copyItem(it)}>
+                    <button title={t("side.copy", { name: it.name })} aria-label={t("side.copy", { name: it.name })} onClick={() => copyItem(it)}>
                       <IconCopy />
                     </button>
                   )}
                   <button
-                    title={`delete ${it.name}`}
-                    aria-label={`delete ${it.name}`}
+                    title={t("side.delete", { name: it.name })}
+                    aria-label={t("side.delete", { name: it.name })}
                     className="danger"
                     onClick={() => deleteItem(it)}
                   >
@@ -443,12 +445,12 @@ export default function App() {
           })}
           {tree.length === 0 && (
             <div className="empty">
-              <p>No saved requests yet.</p>
+              <p>{t("side.empty")}</p>
               <button className="mini" onClick={newRequest}>
-                Create request
+                {t("side.createRequest")}
               </button>
               <button className="mini" onClick={() => setPanel("curl-import")}>
-                Import curl
+                {t("side.importCurl")}
               </button>
             </div>
           )}
@@ -461,8 +463,8 @@ export default function App() {
         <button
           className="pane-rail"
           onClick={() => foldTree(!treeFolded)}
-          title={treeFolded ? "show collections" : "hide collections"}
-          aria-label={treeFolded ? "show collections" : "hide collections"}
+          title={t(treeFolded ? "side.show" : "side.hide")}
+          aria-label={t(treeFolded ? "side.show" : "side.hide")}
           aria-expanded={!treeFolded}
         >
           {treeFolded ? <IconChevronRight /> : <IconChevronLeft />}
@@ -474,7 +476,7 @@ export default function App() {
           className="divider v sidebar-resize"
           role="separator"
           aria-orientation="vertical"
-          aria-label="resize sidebar"
+          aria-label={t("side.resize")}
           aria-valuemin={160}
           aria-valuemax={500}
           aria-valuenow={Math.round(sidebarW)}
@@ -495,9 +497,9 @@ export default function App() {
         {/* Tabs scroll; Settings is pinned outside that scroll area so it
             stays in the window's top-right corner. */}
         <div className="tabrow">
-        <div className="tabstrip" role="tablist" aria-label="open requests">
-          {tabs.map((t, i) => (
-            <div className={"rtab" + (i === active ? " active" : "")} key={t.id}>
+        <div className="tabstrip" role="tablist" aria-label={t("tabs.open")}>
+          {tabs.map((tb, i) => (
+            <div className={"rtab" + (i === active ? " active" : "")} key={tb.id}>
               <button
                 className="rtab-main"
                 role="tab"
@@ -517,35 +519,35 @@ export default function App() {
                   const strip = e.currentTarget.closest('[role="tablist"]');
                   strip?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
                 }}
-                title={t.name || "unsaved draft"}
+                title={tb.name || t("tabs.draft")}
               >
-                <span className={"method m-" + t.req.method}>
-                  {t.req.method === "DELETE" ? "DEL" : t.req.method === "OPTIONS" ? "OPT" : t.req.method}
+                <span className={"method m-" + tb.req.method}>
+                  {tb.req.method === "DELETE" ? "DEL" : tb.req.method === "OPTIONS" ? "OPT" : tb.req.method}
                 </span>
-                <span className="rtab-name">{t.name ? t.name.split("/").pop() : "Untitled"}</span>
-                {tabDirty(t) && <span className="dirty">●</span>}
+                <span className="rtab-name">{tb.name ? tb.name.split("/").pop() : t("tabs.untitled")}</span>
+                {tabDirty(tb) && <span className="dirty">●</span>}
               </button>
               <button
                 className="rtab-x"
-                aria-label={`close ${t.name || "draft"} tab`}
+                aria-label={t("tabs.close", { name: tb.name || t("dlg.thisDraft") })}
                 onClick={() => closeTab(i)}
               >
                 <IconClose size={13} />
               </button>
             </div>
           ))}
-          <button className="rtab-new" onClick={newRequest} aria-label="new request tab" title="new request">
+          <button className="rtab-new" onClick={newRequest} aria-label={t("tabs.newAria")} title={t("tabs.new")}>
             <IconPlus />
           </button>
         </div>
           <select
             className="env-picker"
-            aria-label="active environment"
+            aria-label={t("top.env")}
             title="active environment"
             value={env.active}
             onChange={(e) => switchEnv(e.target.value)}
           >
-            <option value="">No environment</option>
+            <option value="">{t("top.noEnv")}</option>
             {env.names.map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -555,8 +557,8 @@ export default function App() {
           <button
             className="settings-button corner-settings"
             onClick={() => openSettings()}
-            aria-label="Open settings"
-            title="Settings"
+            aria-label={t("top.openSettings")}
+            title={t("top.settings")}
           >
             <IconGear size={17} />
           </button>
@@ -565,7 +567,7 @@ export default function App() {
         <div className="topbar">
           <select
             className={"method-select m-" + req.method}
-            aria-label="HTTP method"
+            aria-label={t("top.method")}
             value={req.method}
             onChange={(e) => setReq({ ...req, method: e.target.value })}
           >
@@ -575,8 +577,8 @@ export default function App() {
           </select>
           <input
             className="url"
-            aria-label="request URL"
-            placeholder="https://api.example.com/v1/ping — {{vars}} welcome"
+            aria-label={t("top.url")}
+            placeholder={t("top.urlPlaceholder")}
             value={req.url}
             onChange={(e) => setReq({ ...req, url: e.target.value })}
             onKeyDown={(e) => e.key === "Enter" && send()}
@@ -584,28 +586,28 @@ export default function App() {
           <TimeoutInput
             ms={req.timeoutMs}
             onChange={(ms) => setReq({ ...req, timeoutMs: ms })}
-            onBad={() => setNote("bad duration — try 500ms, 10s, 2m")}
+            onBad={() => setNote(t("shape.timeHint"))}
           />
           <button
             className="codebtn"
             onClick={() => setPanel("code")}
-            aria-label="generate code"
-            title="generate code (curl · wget · httpie)"
+            aria-label={t("top.code")}
+            title={t("top.codeTitle")}
           >
             <IconCode />
           </button>
           <button className="send" onClick={send} disabled={sending}>
-            {sending ? "Sending…" : "Send"}
+            {sending ? t("top.sending") : t("top.send")}
           </button>
           <button
             className={"test" + (workspace === "load" ? " active" : "")}
             onClick={() => (workspace === "load" ? setWorkspace("request") : openLoadPanel())}
-            title="load testing: profiles, live run, results"
+            title={t("top.loadTestTitle")}
           >
-            Load test
+            {t("top.loadTest")}
           </button>
-          <button className="save" onClick={save} title={current ? `save ${current}` : "save as"}>
-            Save
+          <button className="save" onClick={save} title={current ? t("note.saved", { name: current }) : t("top.saveAs")}>
+            {t("top.save")}
           </button>
         </div>
 
@@ -620,19 +622,19 @@ export default function App() {
         <div className="workrow" ref={workRowRef}>
           <div className="req-col" style={{ flex: `0 0 ${editorFrac * 100}%` }}>
             <div className="tabs" role="tablist">
-              {(["headers", "query", "body", "auth"] as ReqTab[]).map((t) => (
+              {(["headers", "query", "body", "auth"] as ReqTab[]).map((rt) => (
                 <button
-                  key={t}
+                  key={rt}
                   role="tab"
-                  aria-selected={t === tab}
-                  className={t === tab ? "tab active" : "tab"}
-                  onClick={() => setTab(t)}
+                  aria-selected={rt === tab}
+                  className={rt === tab ? "tab active" : "tab"}
+                  onClick={() => setTab(rt)}
                 >
-                  {t}
+                  {t("req." + rt)}
                 </button>
               ))}
-              <button className="curlbtn" onClick={() => setPanel("curl-import")} title="replace this request from a curl command">
-                Import curl
+              <button className="curlbtn" onClick={() => setPanel("curl-import")} title={t("req.importCurlTitle")}>
+                {t("side.importCurl")}
               </button>
             </div>
 
@@ -641,7 +643,7 @@ export default function App() {
                 <RowsEditor
                   rows={req.headers.map((h) => ({ key: h.name, value: h.value, enabled: h.enabled }))}
                   placeholderKey="Header-Name"
-                  keyLabel="Header"
+                  keyLabel={t("req.headerCol")}
                   onChange={(rows) =>
                     setReq({
                       ...req,
@@ -654,7 +656,7 @@ export default function App() {
                 <RowsEditor
                   rows={req.query}
                   placeholderKey="param"
-                  keyLabel="Parameter"
+                  keyLabel={t("req.paramCol")}
                   onChange={(rows) => setReq({ ...req, query: rows })}
                 />
               )}
@@ -662,8 +664,8 @@ export default function App() {
                 <CodeArea
                   value={req.body}
                   onChange={(body) => setReq({ ...req, body })}
-                  ariaLabel="request body"
-                  placeholder='{"raw": "request body"}'
+                  ariaLabel={t("req.bodyAria")}
+                  placeholder={t("req.bodyPlaceholder")}
                 />
               )}
               {tab === "auth" && <AuthEditor req={req} onChange={setReq} />}
@@ -674,7 +676,7 @@ export default function App() {
             className="divider v split"
             role="separator"
             aria-orientation="vertical"
-            aria-label="resize request/response split"
+            aria-label={t("req.split")}
             aria-valuemin={25}
             aria-valuemax={75}
             aria-valuenow={Math.round(editorFrac * 100)}
@@ -713,11 +715,11 @@ export default function App() {
         />
       )}
       {panel === "curl-import" && (
-        <Modal title="Import curl" onClose={() => setPanel("")}>
+        <Modal title={t("dlg.importTitle")} onClose={() => setPanel("")}>
           <div className="curl-import">
             <textarea
               className="mono"
-              aria-label="curl command"
+              aria-label={t("dlg.curlAria")}
               placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '…'"
               value={curlText}
               onChange={(e) => setCurlText(e.target.value)}
@@ -725,9 +727,9 @@ export default function App() {
             />
             <div className="row-buttons">
               <button className="primary" onClick={importCurl}>
-                import
+                {t("dlg.import")}
               </button>
-              <button onClick={() => setPanel("")}>cancel</button>
+              <button onClick={() => setPanel("")}>{t("dlg.cancel")}</button>
             </div>
           </div>
         </Modal>
@@ -750,6 +752,7 @@ function CodeModal({
   onClose: () => void;
   onNote: (s: string) => void;
 }) {
+  const t = useT();
   const [format, setFormat] = useState<CodeFormat>("curl");
   const [code, setCode] = useState("");
 
@@ -761,9 +764,9 @@ function CodeModal({
   }, [format, req]);
 
   return (
-    <Modal title="Generate code" onClose={onClose}>
+    <Modal title={t("dlg.codeTitle")} onClose={onClose}>
       <div className="code-modal">
-        <div className="segmented" role="radiogroup" aria-label="code format">
+        <div className="segmented" role="radiogroup" aria-label={t("dlg.codeFormat")}>
           {CODE_FORMATS.map((f) => (
             <button
               key={f}
@@ -784,13 +787,13 @@ function CodeModal({
             onClick={() =>
               navigator.clipboard
                 .writeText(code)
-                .then(() => onNote(`copied ${format} command`))
-                .catch(() => onNote("clipboard unavailable"))
+                .then(() => onNote(t("note.copiedCode", { format })))
+                .catch(() => onNote(t("note.clipboard")))
             }
           >
-            <IconCopy /> Copy
+            <IconCopy /> {t("resp.copy")}
           </button>
-          <button onClick={onClose}>close</button>
+          <button onClick={onClose}>{t("load.close")}</button>
         </div>
       </div>
     </Modal>
@@ -806,6 +809,7 @@ function TimeoutInput({
   onChange: (ms: number) => void;
   onBad: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(formatDuration(ms));
   useEffect(() => setText(formatDuration(ms)), [ms]);
   const commit = () => {
@@ -821,8 +825,8 @@ function TimeoutInput({
     <input
       className="timeout"
       placeholder="30s"
-      aria-label="request timeout"
-      title="request timeout (empty = default)"
+      aria-label={t("top.timeout")}
+      title={t("top.timeoutTitle")}
       value={text}
       onChange={(e) => setText(e.target.value)}
       onBlur={commit}
@@ -842,6 +846,7 @@ function RowsEditor({
   keyLabel: string;
   onChange: (rows: KV[]) => void;
 }) {
+  const t = useT();
   const set = (i: number, patch: Partial<KV>) =>
     onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
   // Typing in the trailing blank row promotes it to a real one (Postman's
@@ -855,11 +860,11 @@ function RowsEditor({
       <div className="row rows-head">
         <span className="head-check" aria-hidden="true" />
         <span className="head-label k">{keyLabel}</span>
-        <span className="head-label v">Value</span>
+        <span className="head-label v">{t("req.valueCol")}</span>
         <button
           className="add"
-          title={`add ${keyLabel.toLowerCase()}`}
-          aria-label={`add ${keyLabel.toLowerCase()}`}
+          title={t("req.add", { what: keyLabel })}
+          aria-label={t("req.add", { what: keyLabel })}
           onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}
         >
           <IconPlus size={14} />
@@ -869,13 +874,13 @@ function RowsEditor({
         <div className="row" key={i}>
           <input
             type="checkbox"
-            aria-label={`row ${i + 1} enabled`}
+            aria-label={t("req.rowEnabled", { n: i + 1 })}
             checked={r.enabled}
             onChange={(e) => set(i, { enabled: e.target.checked })}
           />
           <input className="k" placeholder={placeholderKey} value={r.key} onChange={(e) => set(i, { key: e.target.value })} />
-          <input className="v" placeholder="value" value={r.value} onChange={(e) => set(i, { value: e.target.value })} />
-          <button className="del" aria-label={`delete row ${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+          <input className="v" placeholder={t("req.valueCol")} value={r.value} onChange={(e) => set(i, { value: e.target.value })} />
+          <button className="del" aria-label={t("req.deleteRow", { n: i + 1 })} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
             <IconClose size={14} />
           </button>
         </div>
@@ -885,14 +890,14 @@ function RowsEditor({
         <input
           className="k"
           placeholder={placeholderKey}
-          aria-label={`new ${placeholderKey}`}
+          aria-label={t("req.add", { what: keyLabel })}
           value=""
           onChange={(e) => promote({ key: e.target.value })}
         />
         <input
           className="v"
-          placeholder="value"
-          aria-label="new value"
+          placeholder={t("req.valueCol")}
+          aria-label={t("req.newValue")}
           value=""
           onChange={(e) => promote({ value: e.target.value })}
         />
@@ -903,25 +908,26 @@ function RowsEditor({
 }
 
 function AuthEditor({ req, onChange }: { req: RequestDef; onChange: (r: RequestDef) => void }) {
+  const t = useT();
   const a = req.auth;
   const set = (patch: Partial<RequestDef["auth"]>) => onChange({ ...req, auth: { ...a, ...patch } });
   return (
     <div className="auth">
       <label className="auth-field">
-        <span>Type</span>
+        <span>{t("auth.type")}</span>
         <select value={a.type} onChange={(e) => set({ type: e.target.value as RequestDef["auth"]["type"] })}>
-          <option value="">No auth</option>
-          <option value="bearer">Bearer token</option>
-          <option value="basic">Basic</option>
-          <option value="apikey">API key</option>
+          <option value="">{t("auth.none")}</option>
+          <option value="bearer">{t("auth.bearer")}</option>
+          <option value="basic">{t("auth.basic")}</option>
+          <option value="apikey">{t("auth.apikey")}</option>
         </select>
       </label>
       {a.type === "bearer" && (
         <label className="auth-field">
-          <span>Token</span>
+          <span>{t("auth.token")}</span>
           <input
             className="mono"
-            placeholder="{{token}} or a literal value"
+            placeholder={t("auth.tokenPlaceholder")}
             value={a.token ?? ""}
             onChange={(e) => set({ token: e.target.value })}
           />
@@ -930,11 +936,11 @@ function AuthEditor({ req, onChange }: { req: RequestDef; onChange: (r: RequestD
       {a.type === "basic" && (
         <>
           <label className="auth-field">
-            <span>Username</span>
+            <span>{t("auth.username")}</span>
             <input className="mono" value={a.username ?? ""} onChange={(e) => set({ username: e.target.value })} />
           </label>
           <label className="auth-field">
-            <span>Password</span>
+            <span>{t("auth.password")}</span>
             <input
               className="mono"
               type="password"
@@ -947,7 +953,7 @@ function AuthEditor({ req, onChange }: { req: RequestDef; onChange: (r: RequestD
       {a.type === "apikey" && (
         <>
           <label className="auth-field">
-            <span>Key name</span>
+            <span>{t("auth.keyName")}</span>
             <input
               className="mono"
               placeholder="X-API-Key"
@@ -956,12 +962,12 @@ function AuthEditor({ req, onChange }: { req: RequestDef; onChange: (r: RequestD
             />
           </label>
           <label className="auth-field">
-            <span>Value</span>
+            <span>{t("auth.value")}</span>
             <input className="mono" value={a.value ?? ""} onChange={(e) => set({ value: e.target.value })} />
           </label>
           <label className="inq">
             <input type="checkbox" checked={a.inQuery ?? false} onChange={(e) => set({ inQuery: e.target.checked })} />
-            Send in query string instead of a header
+            {t("auth.inQuery")}
           </label>
         </>
       )}
@@ -978,6 +984,7 @@ function ResponsePane({
   sending: boolean;
   onNote: (s: string) => void;
 }) {
+  const t = useT();
   const [view, setView] = useState<"body" | "headers">("body");
   const [raw, setRaw] = useState(false);
   const pretty = useMemo(() => {
@@ -989,8 +996,8 @@ function ResponsePane({
     }
   }, [resp]);
 
-  if (sending) return <section className="response wait">sending…</section>;
-  if (!resp) return <section className="response empty">send a request to see the result here</section>;
+  if (sending) return <section className="response wait">{t("resp.sending")}</section>;
+  if (!resp) return <section className="response empty">{t("resp.empty")}</section>;
   if (resp.error) return <section className="response err">{resp.error}</section>;
 
   const cls = resp.statusCode >= 500 ? "s5" : resp.statusCode >= 400 ? "s4" : resp.statusCode >= 300 ? "s3" : "s2";
@@ -1000,18 +1007,18 @@ function ResponsePane({
       <div className="status-line">
         <span className={"status " + cls}>{resp.status}</span>
         <span className="meta">
-          {resp.durationMs} ms · {resp.size} B{resp.truncated ? " (truncated)" : ""} · {resp.proto}
+          {resp.durationMs} ms · {resp.size} B{resp.truncated ? ` (${t("resp.truncated")})` : ""} · {resp.proto}
         </span>
         <span className="resp-tools">
           <button className={view === "body" ? "on" : ""} onClick={() => setView("body")}>
-            body
+            {t("resp.body")}
           </button>
           <button className={view === "headers" ? "on" : ""} onClick={() => setView("headers")}>
-            headers
+            {t("resp.headers")}
           </button>
           {view === "body" && (
-            <button className={raw ? "on" : ""} onClick={() => setRaw(!raw)} title="toggle raw / pretty JSON">
-              raw
+            <button className={raw ? "on" : ""} onClick={() => setRaw(!raw)} title={t("resp.rawTitle")}>
+              {t("resp.raw")}
             </button>
           )}
           <button
@@ -1019,11 +1026,11 @@ function ResponsePane({
               const text = view === "headers" ? resp.headers.map((h) => `${h.name}: ${h.value}`).join("\n") : bodyText;
               navigator.clipboard
                 .writeText(text)
-                .then(() => onNote("copied to clipboard"))
-                .catch(() => onNote("clipboard unavailable"));
+                .then(() => onNote(t("note.copied")))
+                .catch(() => onNote(t("note.clipboard")));
             }}
           >
-            <IconCopy /> Copy
+            <IconCopy /> {t("resp.copy")}
           </button>
         </span>
       </div>

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, formatDuration, parseDuration, unitFor, type LoadMode, type Profile, type ProfilePoint } from "./api";
 import { appConfirm } from "./dialogs";
 import { IconReset } from "./icons";
+import { useT } from "./i18n";
 import { niceMax, ShapeChart } from "./ui";
 
 const CHART_W = 560;
@@ -30,6 +31,7 @@ export default function ShapeEditor({
   const [points, setPoints] = useState<ProfilePoint[]>(
     initial?.points?.length ? initial.points.map((p) => ({ ...p })) : [{ atMs: 0, rps: 20 }, { atMs: 30000, rps: 20 }],
   );
+  const t = useT();
   const [sel, setSel] = useState(0);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [mode, setMode] = useState<LoadMode>(initial?.mode ?? "");
@@ -109,7 +111,7 @@ export default function ShapeEditor({
 
   const deletePoint = () => {
     if (points.length <= 2) {
-      onNote("a profile needs at least two points");
+      onNote(t("shape.needTwo"));
       return;
     }
     const ps = points.filter((_, j) => j !== sel);
@@ -124,10 +126,8 @@ export default function ShapeEditor({
     JSON.stringify(baseline.current);
 
   const reset = async () => {
-    const ok = await appConfirm("Reset this profile?", {
-      body: initial
-        ? "Discards your edits and restores the last saved shape."
-        : "Restores the shape this editor started from.",
+    const ok = await appConfirm(t("shape.resetConfirm"), {
+      body: t(initial ? "shape.resetSaved" : "shape.resetStart"),
       danger: true,
     });
     if (!ok) return;
@@ -140,12 +140,12 @@ export default function ShapeEditor({
     setMaxWorkers(b.maxWorkers);
     setSel(0);
     setShowJSON(false);
-    onNote(`reset ${name} to its ${initial ? "saved" : "starting"} shape`);
+    onNote(t("shape.resetNote", { name }));
   };
 
   const save = async () => {
     if (durationMs <= 0) {
-      onNote("profile duration must be positive — move the last point right");
+      onNote(t("shape.needDuration"));
       return;
     }
     try {
@@ -161,10 +161,10 @@ export default function ShapeEditor({
         durationMs: 0,
         planned: 0,
       });
-      onNote(`saved load profile ${name}`);
+      onNote(t("shape.saved", { name }));
       onSaved();
     } catch (e) {
-      onNote(`profile save failed: ${String(e)}`);
+      onNote(t("shape.saveFailed", { err: String(e) }));
     }
   };
 
@@ -213,7 +213,7 @@ export default function ShapeEditor({
       setSel(0);
       setShowJSON(false);
     } catch (e) {
-      onNote(`profile JSON invalid: ${String(e)}`);
+      onNote(t("shape.badJSON", { err: String(e) }));
     }
   };
 
@@ -230,17 +230,17 @@ export default function ShapeEditor({
         {formatDuration(durationMs) || "0s"}
         {mode === "users"
           ? thinkMs > 0
-            ? ` · ${formatDuration(thinkMs)} think time`
-            : " · no think time"
-          : ` · up to ${planned} req`}
+            ? ` · ${t("load.thinkTime", { d: formatDuration(thinkMs) })}`
+            : ` · ${t("load.noThink")}`
+          : ` · ${t("shape.upTo", { n: planned })}`}
       </div>
         <button
           className="mini reset-btn"
           onClick={reset}
           disabled={!changed}
-          title={changed ? "restore the shape this editor opened with" : "no edits to undo"}
+          title={t(changed ? "shape.resetTitle" : "shape.resetNone")}
         >
-          <IconReset size={14} /> Reset
+          <IconReset size={14} /> {t("shape.reset")}
         </button>
       </div>
 
@@ -277,16 +277,16 @@ export default function ShapeEditor({
 
       <div className="shape-controls">
         <fieldset>
-          <legend>point {sel + 1} of {points.length}</legend>
+          <legend>{t("shape.point", { n: sel + 1, total: points.length })}</legend>
           <label>
-            time
+            {t("shape.time")}
             <TimeDraftInput
               key={sel} // a fresh draft per selected point
               ms={p.atMs}
               disabled={sel === 0}
-              title={sel === 0 ? "the first point is pinned to 0s" : "e.g. 10s, 500ms, 2m"}
+              title={t(sel === 0 ? "shape.firstPinned" : "shape.timeHint")}
               onCommit={(ms) => setPoint(sel, ms, p.rps)}
-              onBad={() => onNote("bad duration — try 500ms, 10s, 2m")}
+              onBad={() => onNote(t("shape.timeHint"))}
             />
           </label>
           <label>
@@ -300,34 +300,34 @@ export default function ShapeEditor({
             />
           </label>
           <button className="mini" onClick={addPoint}>
-            Add point
+            {t("shape.addPoint")}
           </button>
           <button className="mini danger" onClick={deletePoint}>
-            Delete point
+            {t("shape.deletePoint")}
           </button>
         </fieldset>
 
         <fieldset>
-          <legend>execution</legend>
+          <legend>{t("shape.execution")}</legend>
           <label>
-            mode
+            {t("shape.mode")}
             <select
               className="mode-select"
               value={mode}
-              title="rate: fire N requests/second regardless of latency. users: N concurrent users, each awaiting its response."
+              title={t("shape.modeTitle")}
               onChange={(e) => setMode(e.target.value as LoadMode)}
             >
-              <option value="">Rate (requests/sec)</option>
-              <option value="users">Users (concurrent)</option>
+              <option value="">{t("shape.modeRate")}</option>
+              <option value="users">{t("shape.modeUsers")}</option>
             </select>
           </label>
           {mode === "users" && (
             <label>
-              think time
+              {t("shape.think")}
               <input
                 className="mono"
                 value={formatDuration(thinkMs) || "0s"}
-                title="pause each user takes between its requests"
+                title={t("shape.thinkTitle")}
                 onChange={(e) => {
                   const ms = parseDuration(e.target.value);
                   if (ms !== null) setThinkMs(ms);
@@ -338,29 +338,29 @@ export default function ShapeEditor({
         </fieldset>
 
         <fieldset>
-          <legend>limits & description</legend>
+          <legend>{t("shape.limits")}</legend>
           <label>
-            request limit
+            {t("shape.maxRequests")}
             <input
               type="number"
               min={0}
               value={maxRequests}
-              title="stop after this many requests; 0 = the shape decides"
+              title={t("shape.maxRequestsTitle")}
               onChange={(e) => setMaxRequests(Math.max(0, Number(e.target.value)))}
             />
           </label>
           <label>
-            worker cap
+            {t("shape.maxWorkers")}
             <input
               type="number"
               min={0}
               value={maxWorkers}
-              title="max concurrent in-flight requests; 0 = default (64)"
+              title={t("shape.maxWorkersTitle")}
               onChange={(e) => setMaxWorkers(Math.max(0, Number(e.target.value)))}
             />
           </label>
           <label className="grow">
-            description
+            {t("shape.description")}
             <input value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
         </fieldset>
@@ -371,23 +371,23 @@ export default function ShapeEditor({
           <textarea className="mono" value={jsonText} onChange={(e) => setJSONText(e.target.value)} spellCheck={false} />
           <div className="row-buttons">
             <button className="primary" onClick={applyJSON}>
-              Apply JSON
+              {t("shape.applyJSON")}
             </button>
-            <button onClick={() => setShowJSON(false)}>Cancel</button>
+            <button onClick={() => setShowJSON(false)}>{t("dlg.cancel")}</button>
           </div>
         </div>
       )}
 
       <div className="row-buttons">
         <button className="primary" onClick={save}>
-          Save profile
+          {t("shape.save")}
         </button>
         {!showJSON && (
           <button className="mini" onClick={openJSON}>
-            Edit as JSON
+            {t("shape.editJSON")}
           </button>
         )}
-        <button onClick={onCancel}>Cancel</button>
+        <button onClick={onCancel}>{t("dlg.cancel")}</button>
       </div>
     </div>
   );

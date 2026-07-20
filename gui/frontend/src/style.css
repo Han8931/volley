@@ -3040,3 +3040,45 @@ button.primary:hover {
   background: var(--warn);
   color: var(--accent-contrast);
 }
+
+/* language picker: same card rhythm as the theme grid */
+.lang-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.lang-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  cursor: pointer;
+  text-align: left;
+  color: var(--dim);
+}
+
+.lang-card b {
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.lang-card small {
+  font-size: 11px;
+}
+
+.lang-card:hover {
+  border-color: var(--line-strong);
+}
+
+.lang-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lang-card.active b {
+  color: var(--accent);
+}

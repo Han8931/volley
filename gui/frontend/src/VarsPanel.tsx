@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type EnvState } from "./api";
 import { appConfirm, appPrompt } from "./dialogs";
 import { IconClose, IconEye, IconEyeOff, IconPlus } from "./icons";
+import { useT } from "./i18n";
 
 // parseEnvJSON accepts only a flat {"name": "value"} object — the on-disk
 // environment shape. Returns null when the text doesn't qualify.
@@ -41,6 +42,7 @@ export default function VarsSection({
   onEnvChange: (st: EnvState) => void;
   onNote: (s: string) => void;
 }) {
+  const t = useT();
   const [session, setSession] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<Set<string>>(new Set()); // session rows shown in clear
   const [newKey, setNewKey] = useState("");
@@ -83,7 +85,7 @@ export default function VarsSection({
       const k = r.key.trim();
       if (k === "") continue; // blank rows are simply dropped
       if (k in vals) {
-        onNote(`duplicate variable name: ${k}`);
+        onNote(t("vars.duplicate", { name: k }));
         return null;
       }
       vals[k] = r.value;
@@ -97,7 +99,7 @@ export default function VarsSection({
     if (showJSON) {
       vals = parseEnvJSON(jsonText);
       if (vals === null) {
-        onNote('environment JSON must be a flat {"name": "value"} object');
+        onNote(t("vars.badJSON"));
         return;
       }
     } else {
@@ -106,7 +108,7 @@ export default function VarsSection({
     }
     try {
       onEnvChange(await api.SaveEnvironment(editing, vals));
-      onNote(`saved environment ${editing} — active`);
+      onNote(t("vars.savedEnv", { name: editing }));
       setEditing(null);
     } catch (e) {
       onNote(String(e));
@@ -114,7 +116,7 @@ export default function VarsSection({
   };
 
   const deleteEnv = async (name: string) => {
-    if (!(await appConfirm(`Delete environment ${name}?`, { danger: true }))) return;
+    if (!(await appConfirm(t("vars.deleteEnv", { name }), { danger: true }))) return;
     try {
       onEnvChange(await api.DeleteEnvironment(name));
       if (editing === name) setEditing(null);
@@ -125,8 +127,8 @@ export default function VarsSection({
 
   return (
     <div className="vars">
-        <h3>Session overrides</h3>
-        <p className="hint">Highest precedence; gone when the app closes. Clearing a value removes it.</p>
+        <h3>{t("vars.session")}</h3>
+        <p className="hint">{t("vars.sessionHelp")}</p>
         {Object.entries(session)
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([k, v]) => (
@@ -135,14 +137,14 @@ export default function VarsSection({
               <input
                 className="v mono"
                 type={revealed.has(k) ? "text" : "password"}
-                aria-label={`value of ${k}`}
+                aria-label={t("vars.value") + " " + k}
                 defaultValue={v}
                 onBlur={(e) => e.target.value !== v && setVar(k, e.target.value)}
               />
               <button
                 className="mini"
-                aria-label={revealed.has(k) ? `hide value of ${k}` : `reveal value of ${k}`}
-                title={revealed.has(k) ? "hide" : "reveal"}
+                aria-label={t(revealed.has(k) ? "vars.hide" : "vars.reveal", { name: k })}
+                title={t(revealed.has(k) ? "vars.hide" : "vars.reveal", { name: k })}
                 onClick={() =>
                   setRevealed((s) => {
                     const next = new Set(s);
@@ -154,34 +156,34 @@ export default function VarsSection({
               >
                 {revealed.has(k) ? <IconEyeOff size={14} /> : <IconEye size={14} />}
               </button>
-              <button className="del" aria-label={`remove ${k}`} onClick={() => setVar(k, "")}>
+              <button className="del" aria-label={t("vars.remove", { name: k })} onClick={() => setVar(k, "")}>
                 <IconClose size={14} />
               </button>
             </div>
           ))}
         <div className="row">
-          <input className="k" placeholder="name" aria-label="new variable name" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+          <input className="k" placeholder={t("vars.name")} aria-label={t("vars.name")} value={newKey} onChange={(e) => setNewKey(e.target.value)} />
           <input
             className="v"
-            placeholder="value"
-            aria-label="new variable value"
+            placeholder={t("vars.value")}
+            aria-label={t("vars.value")}
             value={newVal}
             onChange={(e) => setNewVal(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addVar()}
           />
           <button className="add" onClick={addVar}>
-            <IconPlus size={14} /> Set
+            <IconPlus size={14} /> {t("vars.set")}
           </button>
         </div>
 
-        <h3>Environments</h3>
-        <p className="hint">Stored under the volley config dir; the active one resolves after session overrides.</p>
+        <h3>{t("vars.environments")}</h3>
+        <p className="hint">{t("vars.envHelp")}</p>
         {env.names.map((n) => (
           <div className="row env-row" key={n}>
             <button
               className={"env-name" + (n === env.active ? " active" : "")}
               onClick={async () => onEnvChange(await api.UseEnvironment(n === env.active ? "" : n))}
-              title={n === env.active ? "click to deactivate" : "click to activate"}
+              title={t(n === env.active ? "vars.deactivate" : "vars.activate")}
             >
               {n === env.active ? `● ${n}` : n}
             </button>
@@ -195,24 +197,24 @@ export default function VarsSection({
                 }
               }}
             >
-              Edit
+              {t("vars.edit")}
             </button>
             <button className="mini danger" onClick={() => deleteEnv(n)}>
-              Delete
+              {t("vars.delete")}
             </button>
           </div>
         ))}
         <button
           className="add"
           onClick={async () => {
-            const name = await appPrompt("New environment", {
-              label: "Environment name",
+            const name = await appPrompt(t("vars.newEnv"), {
+              label: t("vars.envName"),
               placeholder: "staging",
             });
             if (name) openEnv(name, { base_url: "https://api.example.com" });
           }}
         >
-          <IconPlus size={14} /> New environment
+          <IconPlus size={14} /> {t("vars.newEnv")}
         </button>
 
         {editing !== null && (
@@ -221,7 +223,7 @@ export default function VarsSection({
             {showJSON ? (
               <textarea
                 className="mono"
-                aria-label={`${editing} as JSON`}
+                aria-label={editing + " JSON"}
                 value={jsonText}
                 onChange={(e) => setJSONText(e.target.value)}
                 spellCheck={false}
@@ -232,30 +234,30 @@ export default function VarsSection({
                   <div className="row" key={i}>
                     <input
                       className="k mono"
-                      placeholder="name"
-                      aria-label={`variable ${i + 1} name`}
+                      placeholder={t("vars.name")}
+                      aria-label={t("vars.name")}
                       value={r.key}
                       onChange={(e) => setRows(rows.map((x, j) => (i === j ? { ...x, key: e.target.value } : x)))}
                     />
                     <input
                       className="v mono"
                       type={r.shown ? "text" : "password"}
-                      placeholder="value"
-                      aria-label={`variable ${i + 1} value`}
+                      placeholder={t("vars.value")}
+                      aria-label={t("vars.value")}
                       value={r.value}
                       onChange={(e) => setRows(rows.map((x, j) => (i === j ? { ...x, value: e.target.value } : x)))}
                     />
                     <button
                       className="mini"
-                      aria-label={r.shown ? "hide value" : "reveal value"}
-                      title={r.shown ? "hide" : "reveal"}
+                      aria-label={t(r.shown ? "vars.hide" : "vars.reveal", { name: r.key })}
+                      title={t(r.shown ? "vars.hide" : "vars.reveal", { name: r.key })}
                       onClick={() => setRows(rows.map((x, j) => (i === j ? { ...x, shown: !x.shown } : x)))}
                     >
                       {r.shown ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                     </button>
                     <button
                       className="del"
-                      aria-label={`remove row ${i + 1}`}
+                      aria-label={t("vars.remove", { name: r.key })}
                       onClick={() => setRows(rows.filter((_, j) => j !== i))}
                     >
                       <IconClose size={14} />
@@ -263,13 +265,13 @@ export default function VarsSection({
                   </div>
                 ))}
                 <button className="add" onClick={() => setRows([...rows, { key: "", value: "", shown: true }])}>
-                  <IconPlus size={14} /> Add variable
+                  <IconPlus size={14} /> {t("vars.addVar")}
                 </button>
               </div>
             )}
             <div className="row-buttons">
               <button className="primary" onClick={saveEnv}>
-                Save & activate
+                {t("vars.saveActivate")}
               </button>
               <button
                 className="mini"
@@ -279,7 +281,7 @@ export default function VarsSection({
                   if (showJSON) {
                     const vals = parseEnvJSON(jsonText);
                     if (vals === null) {
-                      onNote('environment JSON must be a flat {"name": "value"} object');
+                      onNote(t("vars.badJSON"));
                       return;
                     }
                     setRows(
@@ -296,9 +298,9 @@ export default function VarsSection({
                   setShowJSON(true);
                 }}
               >
-                {showJSON ? "Back to fields" : "Edit as JSON"}
+                {t(showJSON ? "vars.backToFields" : "vars.editJSON")}
               </button>
-              <button onClick={() => setEditing(null)}>Cancel</button>
+              <button onClick={() => setEditing(null)}>{t("dlg.cancel")}</button>
             </div>
           </div>
         )}

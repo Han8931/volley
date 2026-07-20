@@ -6,6 +6,7 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { formatDuration, type ProfilePoint } from "./api";
 import { IconClose } from "./icons";
+import { useT } from "./i18n";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -26,6 +27,7 @@ export function Modal({
   wide?: boolean;
   narrow?: boolean;
 }) {
+  const t = useT();
   const box = useRef<HTMLDivElement>(null);
   const titleId = useId();
   // The mount effect must run exactly once — callers recreate onClose every
@@ -88,7 +90,7 @@ export function Modal({
       >
         <div className="modal-head">
           <span id={titleId}>{title}</span>
-          <button className="modal-x" aria-label="close dialog" onClick={onClose}>
+          <button className="modal-x" aria-label={t("dlg.close")} onClick={onClose}>
             <IconClose />
           </button>
         </div>
@@ -152,6 +154,7 @@ export function ShapeChart({
   domainMs?: number; // x-axis extent; > durationMs leaves editing headroom
   children?: (x: (ms: number) => number, y: (rps: number) => number, maxY: number) => ReactNode;
 }) {
+  const t = useT();
   const [hover, setHover] = useState<number | null>(null); // hovered second
   const w = width - PAD_L - PAD_R;
   const h = height - PAD_T - PAD_B;
@@ -169,10 +172,10 @@ export function ShapeChart({
       {(showLegend ?? Boolean(bars)) && (
         <div className="chart-legend" aria-hidden="true">
           <span>
-            <i className="swatch bar-swatch" /> achieved/s
+            <i className="swatch bar-swatch" /> {t("load.legendAchieved")}
           </span>
           <span>
-            <i className="swatch line-swatch" /> target
+            <i className="swatch line-swatch" /> {t("load.legendTarget")}
           </span>
         </div>
       )}
