@@ -7,10 +7,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatDuration, type LoadRun, type Profile, type RequestDef } from "./api";
 import { appConfirm, appPrompt } from "./dialogs";
+import ResultsView from "./ResultsView";
 import ShapeEditor from "./ShapeEditor";
 import { LatencyChart, Modal, ShapeChart } from "./ui";
 
-type Stage = "picker" | "edit" | "confirm" | "run";
+type Stage = "picker" | "edit" | "confirm" | "run" | "results";
 
 export default function LoadPanel({
   req,
@@ -118,6 +119,9 @@ export default function LoadPanel({
               </button>
             ))}
             <div className="row-buttons">
+              <button className="mini" onClick={() => setStage("results")}>
+                history
+              </button>
               <button
                 className="mini"
                 onClick={async () => {
@@ -214,8 +218,17 @@ export default function LoadPanel({
       )}
 
       {stage === "run" && (
-        <RunView run={run} onStop={() => api.StopLoadTest()} onRerun={rerun} onClose={close} onNote={onNote} />
+        <RunView
+          run={run}
+          onStop={() => api.StopLoadTest()}
+          onRerun={rerun}
+          onClose={close}
+          onNote={onNote}
+          onResults={() => setStage("results")}
+        />
       )}
+
+      {stage === "results" && <ResultsView onBack={() => setStage("picker")} onNote={onNote} />}
     </Modal>
   );
 }
@@ -226,12 +239,14 @@ function RunView({
   onRerun,
   onClose,
   onNote,
+  onResults,
 }: {
   run: LoadRun | null;
   onStop: () => void;
   onRerun: () => void;
   onClose: () => void;
   onNote: (s: string) => void;
+  onResults: () => void;
 }) {
   if (!run || !run.running) return <div className="load-run">starting…</div>;
 
@@ -324,6 +339,9 @@ function RunView({
           <>
             <button className="primary" onClick={onRerun}>
               run again
+            </button>
+            <button className="mini" onClick={onResults}>
+              history
             </button>
             <button onClick={onClose}>close</button>
           </>

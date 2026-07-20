@@ -4,12 +4,21 @@ on:
   push:
   pull_request:
 
+# The gui package links Wails, which on Linux compiles against system
+# GTK/WebKit — ubuntu-24.04 ships webkit2gtk 4.1 only, hence the apt
+# packages and the webkit2_41 build tag on every Go step that compiles gui.
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install GUI system dependencies (Wails)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -21,16 +30,21 @@ jobs:
         run: test -z "$(gofmt -l .)"
 
       - name: Vet
-        run: go vet ./...
+        run: go vet -tags webkit2_41 ./...
 
       - name: Test
-        run: go test ./...
+        run: go test -tags webkit2_41 ./...
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install GUI system dependencies (Wails)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -42,3 +56,26 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: latest
+          args: --build-tags=webkit2_41
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui/frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build

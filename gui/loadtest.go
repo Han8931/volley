@@ -143,11 +143,83 @@ type LoadRunDTO struct {
 
 	Buckets []BucketDTO `json:"buckets"`
 
-	Stopped     bool               `json:"stopped"`
-	Summary     *loadtest.Summary  `json:"summary,omitempty"`
-	SummaryText string             `json:"summaryText,omitempty"`
-	SavedAs     string             `json:"savedAs,omitempty"`
-	SaveError   string             `json:"saveError,omitempty"`
+	Stopped     bool              `json:"stopped"`
+	Summary     *loadtest.Summary `json:"summary,omitempty"`
+	SummaryText string            `json:"summaryText,omitempty"`
+	SavedAs     string            `json:"savedAs,omitempty"`
+	SaveError   string            `json:"saveError,omitempty"`
+}
+
+// ResultDTO is one stored run summary, flattened to chartable numbers (the
+// Summary's own JSON uses duration strings) plus the rendered k6-style text.
+type ResultDTO struct {
+	File      string  `json:"file"`
+	Profile   string  `json:"profile"`
+	Method    string  `json:"method"`
+	URL       string  `json:"url"`
+	StartedAt string  `json:"startedAt"` // RFC 3339
+	ElapsedMS int64   `json:"elapsedMs"`
+	Stopped   bool    `json:"stopped"`
+	Planned   int     `json:"planned"`
+	Sent      int     `json:"sent"`
+	Completed int     `json:"completed"`
+	OK        int     `json:"ok"`
+	Errors    int     `json:"errors"`
+	Canceled  int     `json:"canceled"`
+	Dropped   int     `json:"dropped"`
+	PeakRPS   float64 `json:"peakRps"`
+	Achieved  float64 `json:"achievedRps"`
+	ErrorRate float64 `json:"errorRate"` // percent
+	P50MS     float64 `json:"p50Ms"`
+	P90MS     float64 `json:"p90Ms"`
+	P95MS     float64 `json:"p95Ms"`
+	P99MS     float64 `json:"p99Ms"`
+	MaxMS     float64 `json:"maxMs"`
+	Text      string  `json:"text"`
+}
+
+// ListResults returns every saved run, newest first — the results browser's
+// backing data.
+func (a *App) ListResults() ([]ResultDTO, error) {
+	summaries, err := a.resultStore.List()
+	if err != nil {
+		return nil, err
+	}
+	ms := func(d loadtest.Duration) float64 { return float64(time.Duration(d)) / float64(time.Millisecond) }
+	out := []ResultDTO{}
+	for _, s := range summaries {
+		out = append(out, ResultDTO{
+			File:      a.resultStore.FileName(s),
+			Profile:   s.Profile,
+			Method:    s.Method,
+			URL:       s.URL,
+			StartedAt: s.StartedAt.Format(time.RFC3339),
+			ElapsedMS: time.Duration(s.Elapsed).Milliseconds(),
+			Stopped:   s.Stopped,
+			Planned:   s.Planned,
+			Sent:      s.Sent,
+			Completed: s.Completed,
+			OK:        s.OK,
+			Errors:    s.Errors,
+			Canceled:  s.Canceled,
+			Dropped:   s.Dropped,
+			PeakRPS:   s.TargetPeakRPS,
+			Achieved:  s.AchievedRPS,
+			ErrorRate: s.ErrorRate() * 100,
+			P50MS:     ms(s.LatencyP50),
+			P90MS:     ms(s.LatencyP90),
+			P95MS:     ms(s.LatencyP95),
+			P99MS:     ms(s.LatencyP99),
+			MaxMS:     ms(s.LatencyMax),
+			Text:      s.Render(),
+		})
+	}
+	return out, nil
+}
+
+// DeleteResult removes a stored run by file name.
+func (a *App) DeleteResult(file string) error {
+	return a.resultStore.Delete(file)
 }
 
 // StartLoadTest builds the target request and begins a paced run. The

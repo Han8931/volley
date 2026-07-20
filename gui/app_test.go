@@ -211,6 +211,46 @@ func TestLoadTestLifecycle(t *testing.T) {
 	}
 }
 
+func TestResultsListAndDelete(t *testing.T) {
+	a := testApp(t)
+	if results, err := a.ListResults(); err != nil || len(results) != 0 {
+		t.Fatalf("empty store: %v, %v", results, err)
+	}
+
+	older := time.Now().Add(-time.Hour)
+	for i, at := range []time.Time{older, time.Now()} {
+		s := loadtest.Summary{
+			Profile: "quick", Method: "GET", URL: "https://x.test",
+			StartedAt: at, Completed: 100 + i, OK: 100 + i,
+			LatencyP99: loadtest.Duration(time.Duration(5+i) * time.Millisecond),
+		}
+		if _, err := a.resultStore.Save(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := a.ListResults()
+	if err != nil || len(results) != 2 {
+		t.Fatalf("ListResults = %d results, %v", len(results), err)
+	}
+	if results[0].Completed != 101 {
+		t.Error("results should be newest first")
+	}
+	if results[0].P99MS != 6 || results[0].Text == "" || results[0].File == "" {
+		t.Errorf("DTO not flattened: %+v", results[0])
+	}
+
+	if err := a.DeleteResult(results[1].File); err != nil {
+		t.Fatal(err)
+	}
+	if results, _ := a.ListResults(); len(results) != 1 {
+		t.Errorf("delete left %d results", len(results))
+	}
+	if err := a.DeleteResult("../escape.json"); err == nil {
+		t.Error("path traversal in result name must be rejected")
+	}
+}
+
 func TestUseEnvironmentOffAndUnknown(t *testing.T) {
 	a := testApp(t)
 	if _, err := a.UseEnvironment("nosuch"); err == nil {

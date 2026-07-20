@@ -130,6 +130,32 @@ export interface SyncReport {
   detail: string;
 }
 
+export interface RunResult {
+  file: string;
+  profile: string;
+  method: string;
+  url: string;
+  startedAt: string; // RFC 3339
+  elapsedMs: number;
+  stopped: boolean;
+  planned: number;
+  sent: number;
+  completed: number;
+  ok: number;
+  errors: number;
+  canceled: number;
+  dropped: number;
+  peakRps: number;
+  achievedRps: number;
+  errorRate: number; // percent
+  p50Ms: number;
+  p90Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  maxMs: number;
+  text: string; // rendered k6-style analysis
+}
+
 interface Bindings {
   Send(req: RequestDef): Promise<ResponseDef>;
   Unresolved(req: RequestDef): Promise<string[]>;
@@ -159,6 +185,8 @@ interface Bindings {
   ListProfiles(): Promise<Profile[]>;
   SaveProfile(name: string, p: Profile): Promise<void>;
   DeleteProfile(name: string): Promise<void>;
+  ListResults(): Promise<RunResult[]>;
+  DeleteResult(file: string): Promise<void>;
   StartLoadTest(profileName: string, req: RequestDef): Promise<void>;
   StopLoadTest(): Promise<void>;
   DismissLoadTest(): Promise<void>;

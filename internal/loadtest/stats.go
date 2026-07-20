@@ -45,15 +45,15 @@ func (b Bucket) MeanLatency() time.Duration {
 // Snapshot is a point-in-time copy of a run's aggregate results, safe to
 // render while the run continues.
 type Snapshot struct {
-	Elapsed       time.Duration
-	Done          bool
-	Sent          int // dispatched to a worker
-	Completed     int // responses/errors completed; excludes cancellations
-	Errors        int // transport errors + 5xx responses
-	Canceled      int // requests aborted by stopping/cancelling the run
-	Dropped       int // scheduled sends that found no free worker
-	InFlight      int
-	AchievedRPS   float64 // completions per second of elapsed time
+	Elapsed            time.Duration
+	Done               bool
+	Sent               int // dispatched to a worker
+	Completed          int // responses/errors completed; excludes cancellations
+	Errors             int // transport errors + 5xx responses
+	Canceled           int // requests aborted by stopping/cancelling the run
+	Dropped            int // scheduled sends that found no free worker
+	InFlight           int
+	AchievedRPS        float64 // completions per second of elapsed time
 	P50, P90, P95, P99 time.Duration
 	Min, Mean, Max     time.Duration
 	// StatusClasses counts completions by response class: index 0 is

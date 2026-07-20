@@ -27,13 +27,27 @@ func DefaultResultStore() ResultStore {
 	return ResultStore{Root: filepath.Join(base, "volley", "loadresults")}
 }
 
+// FileName is the deterministic name Save stores s under.
+func (rs ResultStore) FileName(s Summary) string {
+	return fmt.Sprintf("%s-%s.json",
+		sanitizeResultName(s.Profile), s.StartedAt.Format("20060102-150405"))
+}
+
+// Delete removes a stored result by its file name (as returned by Save or
+// FileName). Names with path separators are rejected — results are flat.
+func (rs ResultStore) Delete(name string) error {
+	if name != filepath.Base(name) || name == "." || name == "" {
+		return fmt.Errorf("invalid result name: %s", name)
+	}
+	return os.Remove(filepath.Join(rs.Root, name))
+}
+
 // Save writes s as an indented JSON file and returns the file name it chose.
 func (rs ResultStore) Save(s Summary) (string, error) {
 	if err := os.MkdirAll(rs.Root, 0o755); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s-%s.json",
-		sanitizeResultName(s.Profile), s.StartedAt.Format("20060102-150405"))
+	name := rs.FileName(s)
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return "", err
