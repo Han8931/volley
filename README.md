@@ -68,12 +68,31 @@ wails build   # → gui/build/bin/Volley.app (macOS) or a native binary
 
 Feature parity with the TUI: request editing (headers/query/body/auth,
 per-request timeouts), collections with groups and rename/copy/delete,
-`{{vars}}` with session overrides and environments, curl import/export,
-raw/pretty responses with copy, unsaved-changes guarding, and the full
-load-testing flow — profile picker with live shape preview, a **graphical
-shape editor** (drag points on the plot), confirm-before-fire showing the
-resolved target, live run charts, and the same k6-style analysis auto-saved
-to `loadresults/`.
+`{{vars}}` with session overrides and environments, curl import,
+raw/pretty responses with copy, and the full load-testing flow — profile
+picker with live shape preview, a **graphical shape editor** (drag points
+on the plot), confirm-before-fire showing the resolved target, live run
+charts, and the same k6-style analysis auto-saved to `loadresults/`.
+
+On top of parity, the desktop app adds:
+
+- **Request tabs** — every request from the tree opens in its own tab
+  (method chip, dirty dot, close ×); each tab keeps its edits and its own
+  response, and a send finishes on the tab it started from.
+- **Generate code** — the `</>` button beside Send renders the built
+  request (variables resolved, auth applied, query folded) as a **curl**,
+  **wget**, or **httpie** command, ready to copy.
+- **Git sync** — point the config dir at a remote you own (GitHub or any
+  git host) in Settings, then one-click *sync now* (commit → pull
+  --rebase → push), or use the ⇅ button on the collections pane. Your
+  normal git credentials are used; `environments/` (tokens) and
+  `loadresults/` are gitignored so secrets and machine-local data never
+  leave the machine. Both front-ends share the stores, so a sync covers
+  the TUI's data too.
+- **Appearance settings** — four themes (aurora, midnight, graphite,
+  daylight), interface density, and editor text size; the layout is
+  resizable (draggable sidebar and request/response split) and the
+  collections pane folds behind its edge rail.
 
 ## Quick workflow
 
@@ -321,9 +340,13 @@ read the same files.
 - [x] Load-test results: k6-style end-of-run analysis, auto-saved JSON history
 - [x] Environments (named variable sets on disk, layered `{{var}}` resolution)
 - [x] Native desktop app (Wails) over the shared core, at feature parity
+- [x] Desktop: request tabs, themes/density settings, resizable + foldable panes
+- [x] Code generation (curl / wget / httpie) from the built request
+- [x] Git sync for collections and load profiles (secrets stay local)
 - [ ] Load-test comparison (`:loadcompare` — did my change regress p99?)
 - [ ] Tab session persistence across restarts
 - [ ] Persist the active environment across restarts
+- [ ] Code generation and git sync from the TUI (`:codegen`, `:sync`)
 
 > Note: collections are stored as native JSON. Posting/Postman/Bruno collection
 > import/export is not implemented yet; curl import/export is supported.

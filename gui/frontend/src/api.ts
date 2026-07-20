@@ -112,6 +112,24 @@ export interface CurlImport {
   warnings: string[];
 }
 
+export type CodeFormat = "curl" | "wget" | "httpie";
+export const CODE_FORMATS: CodeFormat[] = ["curl", "wget", "httpie"];
+
+export interface SyncState {
+  gitInstalled: boolean;
+  configured: boolean;
+  remote: string;
+  branch: string;
+  dirty: number;
+  root: string;
+}
+
+export interface SyncReport {
+  committed: boolean;
+  pushed: boolean;
+  detail: string;
+}
+
 interface Bindings {
   Send(req: RequestDef): Promise<ResponseDef>;
   Unresolved(req: RequestDef): Promise<string[]>;
@@ -127,6 +145,10 @@ interface Bindings {
   RenameGroup(oldName: string, newName: string): Promise<void>;
   ImportCurl(cmd: string): Promise<CurlImport>;
   ExportCurl(req: RequestDef): Promise<string>;
+  GenerateCode(format: CodeFormat, req: RequestDef): Promise<string>;
+  SyncStatus(): Promise<SyncState>;
+  SyncSetup(remote: string): Promise<SyncState>;
+  SyncNow(): Promise<SyncReport>;
   SessionVars(): Promise<Record<string, string>>;
   SetSessionVar(name: string, value: string): Promise<void>;
   Environments(): Promise<EnvState>;

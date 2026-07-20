@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tabularasa/volley/internal/build"
+	"github.com/tabularasa/volley/internal/codegen"
 	"github.com/tabularasa/volley/internal/collections"
 	"github.com/tabularasa/volley/internal/curl"
 	"github.com/tabularasa/volley/internal/httpx"
@@ -268,6 +269,12 @@ func (a *App) ImportCurl(cmd string) (CurlImportDTO, error) {
 // materialized, query folded — so the command works when pasted anywhere.
 func (a *App) ExportCurl(d RequestDTO) string {
 	return curl.Format(build.Final(toRequest(d), a.resolver()))
+}
+
+// GenerateCode renders the BUILT request in the named CLI dialect
+// (curl / wget / httpie) — the Bruno-style code button next to Send.
+func (a *App) GenerateCode(format string, d RequestDTO) (string, error) {
+	return codegen.Generate(format, build.Final(toRequest(d), a.resolver()))
 }
 
 // --- session variables ---

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   blankRequest,
+  CODE_FORMATS,
   formatDuration,
   METHODS,
   parseDuration,
+  type CodeFormat,
   type EnvState,
   type Header,
   type KV,
@@ -14,11 +16,13 @@ import {
 } from "./api";
 import { appConfirm, appPrompt, DialogHost } from "./dialogs";
 import LoadPanel from "./LoadPanel";
+import SettingsPanel from "./SettingsPanel";
+import { useAppearance } from "./appearance";
 import { Modal } from "./ui";
 import VarsPanel from "./VarsPanel";
 
 type ReqTab = "headers" | "query" | "body" | "auth";
-type Panel = "" | "vars" | "load" | "curl-import";
+type Panel = "" | "vars" | "load" | "curl-import" | "settings" | "code";
 
 // Layout preferences survive restarts (px for the sidebar, fraction of the
 // column for the request editor).
@@ -27,15 +31,36 @@ const savedNum = (key: string, fallback: number) => {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 };
 
+// A Tab is one open request buffer: its own edits, baseline (for the dirty
+// dot), and response — switching tabs preserves everything, like the TUI's
+// per-tab in-memory buffers and Bruno's open-request tabs.
+interface OpenTab {
+  id: number;
+  name: string; // saved name backing the buffer, "" for an unsaved draft
+  req: RequestDef;
+  baseline: string;
+  resp: ResponseDef | null;
+}
+
+const freshTab = (id: number, req = blankRequest(), name = ""): OpenTab => ({
+  id,
+  name,
+  req,
+  baseline: JSON.stringify(req),
+  resp: null,
+});
+
+const tabDirty = (t: OpenTab) => JSON.stringify(t.req) !== t.baseline;
+
 export default function App() {
+  const [appearance, setAppearance] = useAppearance();
   const [tree, setTree] = useState<TreeItem[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [current, setCurrent] = useState<string>(""); // saved name backing the editor
-  const [req, setReq] = useState<RequestDef>(blankRequest());
-  const [baseline, setBaseline] = useState<string>(JSON.stringify(blankRequest()));
+  const [tabs, setTabs] = useState<OpenTab[]>([freshTab(1)]);
+  const [active, setActive] = useState(0);
+  const nextTabId = useRef(2);
   const [tab, setTab] = useState<ReqTab>("headers");
-  const [resp, setResp] = useState<ResponseDef | null>(null);
-  const [sending, setSending] = useState(false);
+  const [sendingId, setSendingId] = useState<number | null>(null);
   const [env, setEnv] = useState<EnvState>({ active: "", names: [] });
   const [note, setNote] = useState("");
   const [panel, setPanel] = useState<Panel>("");
@@ -52,7 +77,38 @@ export default function App() {
     localStorage.setItem("volley.treeFolded", folded ? "on" : "off");
   };
 
-  const dirty = useMemo(() => JSON.stringify(req) !== baseline, [req, baseline]);
+  // The active tab's buffer, exposed under the names the rest of the
+  // component always used.
+  const activeTab = tabs[active];
+  const req = activeTab.req;
+  const current = activeTab.name;
+  const resp = activeTab.resp;
+  const sending = sendingId === activeTab.id;
+  const dirty = useMemo(() => tabDirty(activeTab), [activeTab]);
+
+  const patchTab = (i: number, p: Partial<OpenTab>) =>
+    setTabs((ts) => ts.map((t, j) => (j === i ? { ...t, ...p } : t)));
+  const setReq = (r: RequestDef) => patchTab(active, { req: r });
+
+  const openTab = (t: OpenTab) => {
+    setTabs((ts) => [...ts, t]);
+    setActive(tabs.length); // index of the appended tab
+  };
+
+  const closeTab = async (i: number) => {
+    const t = tabs[i];
+    if (
+      tabDirty(t) &&
+      !(await appConfirm(`Close ${t.name || "this draft"}?`, { body: "The tab has unsaved edits." }))
+    ) {
+      return;
+    }
+    setTabs((ts) => {
+      const next = ts.filter((_, j) => j !== i);
+      return next.length > 0 ? next : [freshTab(nextTabId.current++)];
+    });
+    setActive((a) => Math.max(0, a > i ? a - 1 : Math.min(a, tabs.length - 2)));
+  };
 
   const refreshTree = useCallback(() => {
     api.ListRequests().then(setTree).catch((e) => setNote(String(e)));
@@ -70,30 +126,23 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [note]);
 
-  const guardUnsaved = async () =>
-    !dirty || (await appConfirm("Discard unsaved changes?", { body: "The current request has unsaved edits." }));
-
-  const adopt = (r: RequestDef, name: string) => {
-    setReq(r);
-    setBaseline(JSON.stringify(r));
-    setCurrent(name);
-    setResp(null);
-  };
-
+  // Opening from the tree focuses an existing tab for that request, or opens
+  // a new one — never clobbers another buffer (Bruno-style).
   const open = async (name: string) => {
-    if (!(await guardUnsaved())) return;
+    const existing = tabs.findIndex((t) => t.name === name);
+    if (existing >= 0) {
+      setActive(existing);
+      return;
+    }
     try {
-      adopt(await api.LoadRequest(name), name);
+      openTab(freshTab(nextTabId.current++, await api.LoadRequest(name), name));
       setNote("");
     } catch (e) {
       setNote(String(e));
     }
   };
 
-  const newRequest = async () => {
-    if (!(await guardUnsaved())) return;
-    adopt(blankRequest(), "");
-  };
+  const newRequest = () => openTab(freshTab(nextTabId.current++));
 
   const save = async () => {
     const name =
@@ -103,8 +152,7 @@ export default function App() {
     if (!name) return;
     try {
       await api.SaveRequest(name, req);
-      setBaseline(JSON.stringify(req));
-      setCurrent(name);
+      patchTab(active, { name, baseline: JSON.stringify(req) });
       setNote(`saved ${name}`);
       refreshTree();
     } catch (e) {
@@ -122,14 +170,16 @@ export default function App() {
       setNote(`unresolved: ${missing.map((m) => `{{${m}}}`).join(" ")}`);
       return;
     }
-    setSending(true);
+    const id = activeTab.id; // the response lands on the tab it was sent from
+    setSendingId(id);
     setNote("");
     try {
-      setResp(await api.Send(req));
+      const got = await api.Send(req);
+      setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, resp: got } : t)));
     } catch (e) {
       setNote(String(e));
     } finally {
-      setSending(false);
+      setSendingId((s) => (s === id ? null : s));
     }
   };
 
@@ -153,11 +203,10 @@ export default function App() {
   const importCurl = async () => {
     try {
       const got = await api.ImportCurl(curlText);
-      if (!(await guardUnsaved())) return;
-      setReq(got.request);
-      setBaseline(JSON.stringify(blankRequest())); // imported = unsaved edits
-      setCurrent("");
-      setResp(null);
+      // Imported requests get their own tab as an unsaved draft (baseline is
+      // blank, so the dirty dot shows until saved).
+      const t = freshTab(nextTabId.current++, got.request);
+      openTab({ ...t, baseline: JSON.stringify(blankRequest()) });
       setPanel("");
       setCurlText("");
       setNote(got.warnings.length > 0 ? `imported with warnings: ${got.warnings.join(" · ")}` : "imported curl command");
@@ -166,12 +215,20 @@ export default function App() {
     }
   };
 
-  const exportCurl = async () => {
-    const cmd = await api.ExportCurl(req);
-    navigator.clipboard
-      .writeText(cmd)
-      .then(() => setNote("copied request as curl"))
-      .catch(() => setNote("clipboard unavailable"));
+  const syncNow = async () => {
+    const st = await api.SyncStatus();
+    if (!st.configured) {
+      setNote("sync is not set up — configure it in Settings");
+      setPanel("settings");
+      return;
+    }
+    setNote("syncing…");
+    try {
+      const report = await api.SyncNow();
+      setNote(report.detail || (report.committed ? "changes committed" : "nothing to sync"));
+    } catch (e) {
+      setNote(String(e));
+    }
   };
 
   // Tree CRUD, mirroring the TUI tree's m menu (add/rename/copy/delete).
@@ -180,7 +237,9 @@ export default function App() {
     if (!to || to === it.name) return;
     try {
       await (it.isDir ? api.RenameGroup(it.name, to) : api.RenameRequest(it.name, to));
-      if (!it.isDir && current === it.name) setCurrent(to);
+      if (!it.isDir) {
+        setTabs((ts) => ts.map((t) => (t.name === it.name ? { ...t, name: to } : t)));
+      }
       refreshTree();
     } catch (e) {
       setNote(String(e));
@@ -202,7 +261,15 @@ export default function App() {
     if (!(await appConfirm(`Delete ${it.isDir ? "group" : "request"} ${it.name}?`, { danger: true }))) return;
     try {
       await (it.isDir ? api.DeleteGroup(it.name) : api.DeleteRequest(it.name));
-      if (!it.isDir && current === it.name) setCurrent("");
+      // An open tab for a deleted request becomes an unsaved draft — its
+      // buffer is now the only copy, so it must read as dirty.
+      setTabs((ts) =>
+        ts.map((t) =>
+          t.name === it.name || (it.isDir && t.name.startsWith(it.name + "/"))
+            ? { ...t, name: "", baseline: JSON.stringify(blankRequest()) }
+            : t,
+        ),
+      );
       refreshTree();
     } catch (e) {
       setNote(String(e));
@@ -281,12 +348,21 @@ export default function App() {
     <div className="shell">
       {!treeFolded && (
         <aside className="sidebar" style={{ width: sidebarW, minWidth: sidebarW }}>
-        <div className="brand">VOLLEY</div>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">V</span>
+          <span className="brand-copy">
+            <b>Volley</b>
+            <small>API workspace</small>
+          </span>
+        </div>
         <div className="tree-toolbar" role="toolbar" aria-label="collection actions">
           <button onClick={newRequest}>+ request</button>
           <button onClick={newGroup}>+ group</button>
           <button onClick={refreshTree} aria-label="reload collections from disk" title="reload from disk">
             ⟳
+          </button>
+          <button onClick={syncNow} aria-label="sync collections with git remote" title="sync (git)">
+            ⇅
           </button>
         </div>
         <div className="tree">
@@ -346,7 +422,7 @@ export default function App() {
             ))}
           </select>
           <button className="varsbtn" onClick={() => setPanel("vars")}>
-            {"{{vars}}"}
+            <span aria-hidden="true">{"{·}"}</span> Variables
           </button>
         </div>
         </aside>
@@ -364,7 +440,7 @@ export default function App() {
 
       {!treeFolded && (
         <div
-          className="divider v"
+          className="divider v sidebar-resize"
           role="separator"
           aria-orientation="vertical"
           aria-label="resize sidebar"
@@ -385,6 +461,36 @@ export default function App() {
       )}
 
       <main className="main">
+        <div className="tabstrip" role="tablist" aria-label="open requests">
+          {tabs.map((t, i) => (
+            <div className={"rtab" + (i === active ? " active" : "")} key={t.id}>
+              <button
+                className="rtab-main"
+                role="tab"
+                aria-selected={i === active}
+                onClick={() => setActive(i)}
+                title={t.name || "unsaved draft"}
+              >
+                <span className={"method m-" + t.req.method}>
+                  {t.req.method === "DELETE" ? "DEL" : t.req.method === "OPTIONS" ? "OPT" : t.req.method}
+                </span>
+                <span className="rtab-name">{t.name ? t.name.split("/").pop() : "Untitled"}</span>
+                {tabDirty(t) && <span className="dirty">●</span>}
+              </button>
+              <button
+                className="rtab-x"
+                aria-label={`close ${t.name || "draft"} tab`}
+                onClick={() => closeTab(i)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button className="rtab-new" onClick={newRequest} aria-label="new request tab" title="new request">
+            +
+          </button>
+        </div>
+
         <div className="topbar">
           <select
             className={"method-select m-" + req.method}
@@ -409,14 +515,20 @@ export default function App() {
             onChange={(ms) => setReq({ ...req, timeoutMs: ms })}
             onBad={() => setNote("bad duration — try 500ms, 10s, 2m")}
           />
+          <button className="codebtn" onClick={() => setPanel("code")} title="generate code (curl · wget · httpie)">
+            {"</>"}
+          </button>
           <button className="send" onClick={send} disabled={sending}>
-            {sending ? "…" : "SEND"}
+            {sending ? "Sending…" : "Send"}
           </button>
           <button className="test" onClick={openLoadPanel}>
-            TEST
+            Load test
           </button>
           <button className="save" onClick={save} title={current ? `save ${current}` : "save as"}>
-            SAVE
+            Save
+          </button>
+          <button className="settings-button" onClick={() => setPanel("settings")} aria-label="Open settings" title="Settings">
+            <SettingsIcon />
           </button>
         </div>
 
@@ -436,9 +548,6 @@ export default function App() {
               ))}
               <button className="curlbtn" onClick={() => setPanel("curl-import")}>
                 import curl
-              </button>
-              <button className="curlbtn" onClick={exportCurl}>
-                copy as curl
               </button>
               <div className="doc">
                 {current || "[No Name]"}
@@ -508,11 +617,15 @@ export default function App() {
         )}
       </main>
 
+      {panel === "code" && <CodeModal req={req} onClose={() => setPanel("")} onNote={setNote} />}
       {panel === "vars" && (
         <VarsPanel env={env} onEnvChange={setEnv} onClose={() => setPanel("")} onNote={setNote} />
       )}
       {panel === "load" && (
         <LoadPanel req={req} targetUrl={targetUrl} onClose={() => setPanel("")} onNote={setNote} />
+      )}
+      {panel === "settings" && (
+        <SettingsPanel appearance={appearance} onChange={setAppearance} onClose={() => setPanel("")} />
       )}
       {panel === "curl-import" && (
         <Modal title="Import curl" onClose={() => setPanel("")}>
@@ -536,6 +649,74 @@ export default function App() {
       )}
       <DialogHost />
     </div>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg className="settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
+      <path d="m19.2 13.5 1.3 1-.2 1.2-1.6.5a7.7 7.7 0 0 1-1.2 1.4l.3 1.7-1 .7-1.5-.8a7.8 7.8 0 0 1-1.8.6l-.8 1.5h-1.3l-.8-1.5a7.8 7.8 0 0 1-1.8-.6l-1.5.8-1-.7.3-1.7a7.7 7.7 0 0 1-1.2-1.4l-1.6-.5-.2-1.2 1.3-1a7.8 7.8 0 0 1 0-1.9l-1.3-1 .2-1.2 1.6-.5a7.7 7.7 0 0 1 1.2-1.4l-.3-1.7 1-.7 1.5.8a7.8 7.8 0 0 1 1.8-.6l.8-1.5h1.3l.8 1.5a7.8 7.8 0 0 1 1.8.6l1.5-.8 1 .7-.3 1.7a7.7 7.7 0 0 1 1.2 1.4l1.6.5.2 1.2-1.3 1a7.8 7.8 0 0 1 0 1.9Z" />
+    </svg>
+  );
+}
+
+// CodeModal renders the built request as a runnable command — Bruno's
+// generate-code button. Format switch regenerates through the Go side so
+// vars/auth/query handling matches what Send would do.
+function CodeModal({
+  req,
+  onClose,
+  onNote,
+}: {
+  req: RequestDef;
+  onClose: () => void;
+  onNote: (s: string) => void;
+}) {
+  const [format, setFormat] = useState<CodeFormat>("curl");
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    api
+      .GenerateCode(format, req)
+      .then(setCode)
+      .catch((e) => setCode(String(e)));
+  }, [format, req]);
+
+  return (
+    <Modal title="Generate code" onClose={onClose}>
+      <div className="code-modal">
+        <div className="segmented" role="radiogroup" aria-label="code format">
+          {CODE_FORMATS.map((f) => (
+            <button
+              key={f}
+              role="radio"
+              aria-checked={format === f}
+              tabIndex={format === f ? 0 : -1}
+              className={format === f ? "active" : ""}
+              onClick={() => setFormat(f)}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <pre className="code-out mono">{code}</pre>
+        <div className="row-buttons">
+          <button
+            className="primary"
+            onClick={() =>
+              navigator.clipboard
+                .writeText(code)
+                .then(() => onNote(`copied ${format} command`))
+                .catch(() => onNote("clipboard unavailable"))
+            }
+          >
+            ⧉ copy
+          </button>
+          <button onClick={onClose}>close</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
