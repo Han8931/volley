@@ -230,11 +230,15 @@ export function LatencyChart({
   durationMs,
   width = 560,
   height = 64,
+  label = "mean latency per second",
+  unit = "milliseconds",
 }: {
-  values: number[]; // mean latency ms per 1s bucket
+  values: number[]; // one value per slot (per-second latency, or per-run p99)
   durationMs: number;
   width?: number;
   height?: number;
+  label?: string; // what the series is — the chart is reused for run trends
+  unit?: string;
 }) {
   const w = width - PAD_L - PAD_R;
   const h = height - PAD_T - 6;
@@ -248,7 +252,7 @@ export function LatencyChart({
       className="chart latency"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`mean latency per second, up to ${Math.round(maxY)} milliseconds`}
+      aria-label={`${label}, up to ${Math.round(maxY)} ${unit}`}
     >
       <line className="grid" x1={PAD_L} y1={PAD_T} x2={width - PAD_R} y2={PAD_T} />
       <text className="tick" x={PAD_L - 4} y={PAD_T + 3} textAnchor="end">
@@ -256,7 +260,7 @@ export function LatencyChart({
       </text>
       <line className="grid" x1={PAD_L} y1={PAD_T + h} x2={width - PAD_R} y2={PAD_T + h} />
       <polyline className="latency-line" points={pts}>
-        <title>mean latency per second</title>
+        <title>{label}</title>
       </polyline>
     </svg>
   );

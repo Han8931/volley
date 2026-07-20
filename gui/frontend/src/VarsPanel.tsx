@@ -8,6 +8,23 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type EnvState } from "./api";
 import { appConfirm, appPrompt } from "./dialogs";
 
+// parseEnvJSON accepts only a flat {"name": "value"} object — the on-disk
+// environment shape. Returns null when the text doesn't qualify.
+function parseEnvJSON(text: string): Record<string, string> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v !== "string") return null;
+      out[k] = v;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 interface EnvRow {
   key: string;
   value: string;
@@ -77,16 +94,9 @@ export default function VarsSection({
     if (editing === null) return;
     let vals: Record<string, string> | null;
     if (showJSON) {
-      try {
-        const parsed: unknown = JSON.parse(jsonText);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
-        vals = {};
-        for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v !== "string") throw new Error(`"${k}" must be a string`);
-          vals[k] = v;
-        }
-      } catch (e) {
-        onNote(`environment JSON must be a flat {"name": "value"} object — ${String(e)}`);
+      vals = parseEnvJSON(jsonText);
+      if (vals === null) {
+        onNote('environment JSON must be a flat {"name": "value"} object');
         return;
       }
     } else {
@@ -114,7 +124,7 @@ export default function VarsSection({
 
   return (
     <div className="vars">
-        <h3>session overrides</h3>
+        <h3>Session overrides</h3>
         <p className="hint">Highest precedence; gone when the app closes. Clearing a value removes it.</p>
         {Object.entries(session)
           .sort(([a], [b]) => a.localeCompare(b))
@@ -159,11 +169,11 @@ export default function VarsSection({
             onKeyDown={(e) => e.key === "Enter" && addVar()}
           />
           <button className="add" onClick={addVar}>
-            + set
+            + Set
           </button>
         </div>
 
-        <h3>environments</h3>
+        <h3>Environments</h3>
         <p className="hint">Stored under the volley config dir; the active one resolves after session overrides.</p>
         {env.names.map((n) => (
           <div className="row env-row" key={n}>
@@ -184,10 +194,10 @@ export default function VarsSection({
                 }
               }}
             >
-              edit
+              Edit
             </button>
             <button className="mini danger" onClick={() => deleteEnv(n)}>
-              delete
+              Delete
             </button>
           </div>
         ))}
@@ -201,7 +211,7 @@ export default function VarsSection({
             if (name) openEnv(name, { base_url: "https://api.example.com" });
           }}
         >
-          + new environment
+          + New environment
         </button>
 
         {editing !== null && (
@@ -252,18 +262,30 @@ export default function VarsSection({
                   </div>
                 ))}
                 <button className="add" onClick={() => setRows([...rows, { key: "", value: "", shown: true }])}>
-                  + add variable
+                  + Add variable
                 </button>
               </div>
             )}
             <div className="row-buttons">
               <button className="primary" onClick={saveEnv}>
-                save & activate
+                Save & activate
               </button>
               <button
                 className="mini"
                 onClick={() => {
+                  // Both directions carry the edits across, so switching
+                  // views never silently drops what you just typed.
                   if (showJSON) {
+                    const vals = parseEnvJSON(jsonText);
+                    if (vals === null) {
+                      onNote('environment JSON must be a flat {"name": "value"} object');
+                      return;
+                    }
+                    setRows(
+                      Object.entries(vals)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([key, value]) => ({ key, value, shown: false })),
+                    );
                     setShowJSON(false);
                     return;
                   }
@@ -273,9 +295,9 @@ export default function VarsSection({
                   setShowJSON(true);
                 }}
               >
-                {showJSON ? "back to fields" : "edit as JSON"}
+                {showJSON ? "Back to fields" : "Edit as JSON"}
               </button>
-              <button onClick={() => setEditing(null)}>cancel</button>
+              <button onClick={() => setEditing(null)}>Cancel</button>
             </div>
           </div>
         )}

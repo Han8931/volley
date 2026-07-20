@@ -39,6 +39,22 @@ function radioNav<T>(e: KeyboardEvent, options: T[], current: T, select: (next: 
   radios?.[(i + dir + options.length) % options.length]?.focus();
 }
 
+// tablistNav gives a tablist its expected keyboard contract: arrows move
+// (and select) along the list, Home/End jump to the ends, wrapping.
+function tablistNav<T>(e: KeyboardEvent, ids: T[], current: T, select: (next: T) => void) {
+  const i = ids.indexOf(current);
+  let next = i;
+  if (e.key === "ArrowDown" || e.key === "ArrowRight") next = (i + 1) % ids.length;
+  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") next = (i - 1 + ids.length) % ids.length;
+  else if (e.key === "Home") next = 0;
+  else if (e.key === "End") next = ids.length - 1;
+  else return;
+  e.preventDefault();
+  select(ids[next]);
+  const tabs = e.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]');
+  tabs?.[next]?.focus();
+}
+
 export default function SettingsPanel({
   appearance,
   onChange,
@@ -66,10 +82,14 @@ export default function SettingsPanel({
           {SECTIONS.map((s) => (
             <button
               key={s.id}
+              id={`settings-tab-${s.id}`}
               role="tab"
               aria-selected={section === s.id}
+              aria-controls={`settings-panel-${s.id}`}
+              tabIndex={section === s.id ? 0 : -1}
               className={"settings-navitem" + (section === s.id ? " active" : "")}
               onClick={() => setSection(s.id)}
+              onKeyDown={(e) => tablistNav(e, SECTIONS.map((x) => x.id), section, setSection)}
             >
               <b>{s.label}</b>
               <small>{s.blurb}</small>
@@ -77,8 +97,15 @@ export default function SettingsPanel({
           ))}
         </nav>
 
-        <div className="settings-body" role="tabpanel">
-          {section === "appearance" && (
+        {/* Every panel stays mounted — unmounting would throw away
+            half-finished environment rows or JSON when you navigate away. */}
+        <div className="settings-body">
+          <div
+            id="settings-panel-appearance"
+            role="tabpanel"
+            aria-labelledby="settings-tab-appearance"
+            hidden={section !== "appearance"}
+          >
             <section className="settings-section" aria-labelledby="theme-heading">
               <div className="settings-heading">
                 <div>
@@ -118,9 +145,14 @@ export default function SettingsPanel({
                 <button className="mini" onClick={() => onChange(DEFAULT_APPEARANCE)}>Reset appearance</button>
               </div>
             </section>
-          )}
+          </div>
 
-          {section === "interface" && (
+          <div
+            id="settings-panel-interface"
+            role="tabpanel"
+            aria-labelledby="settings-tab-interface"
+            hidden={section !== "interface"}
+          >
             <section className="settings-section split-settings">
               <SettingChoice<Density>
                 title="Interface density"
@@ -144,13 +176,25 @@ export default function SettingsPanel({
                 onChange={(codeSize) => patch({ codeSize })}
               />
             </section>
-          )}
+          </div>
 
-          {section === "variables" && (
+          <div
+            id="settings-panel-variables"
+            role="tabpanel"
+            aria-labelledby="settings-tab-variables"
+            hidden={section !== "variables"}
+          >
             <VarsSection env={env} onEnvChange={onEnvChange} onNote={onNote} />
-          )}
+          </div>
 
-          {section === "sync" && <SyncSection />}
+          <div
+            id="settings-panel-sync"
+            role="tabpanel"
+            aria-labelledby="settings-tab-sync"
+            hidden={section !== "sync"}
+          >
+            <SyncSection />
+          </div>
         </div>
       </div>
     </Modal>

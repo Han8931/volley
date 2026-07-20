@@ -46,8 +46,13 @@ export default function ResultsView({
     return later[0]; // results are newest-first, so the first older one
   }, [results, current]);
 
-  // Trend: p99 per run, oldest → newest, for the filtered set's profile(s).
-  const trend = useMemo(() => [...filtered].reverse().map((r) => r.p99Ms), [filtered]);
+  // Trend: p99 per run, oldest → newest. Only meaningful within ONE profile
+  // — connecting runs of different shapes would imply a comparison that
+  // isn't real — so it needs a profile filter.
+  const trend = useMemo(
+    () => (profile === "" ? [] : [...filtered].reverse().map((r) => r.p99Ms)),
+    [filtered, profile],
+  );
 
   const remove = async (r: RunResult) => {
     if (!(await appConfirm(`Delete this ${r.profile} run?`, { danger: true }))) return;
@@ -86,11 +91,23 @@ export default function ResultsView({
         </span>
       </div>
 
-      {trend.length > 1 && (
+      {trend.length > 1 ? (
         <>
-          <div className="chart-label">p99 per run (ms) · oldest → newest</div>
-          <LatencyChart values={trend} durationMs={trend.length * 1000} height={54} />
+          <div className="chart-label">
+            {profile} · p99 per run (ms) · oldest → newest
+          </div>
+          <LatencyChart
+            values={trend}
+            durationMs={trend.length * 1000}
+            height={54}
+            label={`${profile} p99 per run`}
+          />
         </>
+      ) : (
+        profile === "" &&
+        results.length > 1 && (
+          <p className="hint">Pick a profile to see its p99 trend across runs.</p>
+        )
       )}
 
       <div className="results-split">

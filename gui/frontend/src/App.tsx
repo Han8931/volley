@@ -196,11 +196,9 @@ export default function App() {
     }
   };
 
+  // Opens regardless of the request's state: profiles and run history are
+  // browsable on their own. The URL is only required to actually fire a run.
   const openLoadPanel = async () => {
-    if (!req.url.trim()) {
-      setNote("cannot load test: URL is empty");
-      return;
-    }
     setTargetUrl(await api.BuiltURL(req).catch(() => req.url));
     setPanel("load");
   };
@@ -386,11 +384,16 @@ export default function App() {
               <div key={it.name} className="tree-line" style={{ paddingLeft: depth * 14 }}>
                 {it.isDir ? (
                   <button
-                    className="tree-group"
+                    className={"tree-group" + (collapsed.has(it.name) ? " collapsed" : "")}
                     aria-expanded={!collapsed.has(it.name)}
                     onClick={() => toggleGroup(it.name)}
                   >
                     {leaf}/
+                    {collapsed.has(it.name) && (
+                      <span className="group-count">
+                        {tree.filter((x) => !x.isDir && x.name.startsWith(it.name + "/")).length}
+                      </span>
+                    )}
                   </button>
                 ) : (
                   <button
@@ -473,7 +476,21 @@ export default function App() {
                 className="rtab-main"
                 role="tab"
                 aria-selected={i === active}
+                tabIndex={i === active ? 0 : -1}
                 onClick={() => setActive(i)}
+                onKeyDown={(e) => {
+                  const last = tabs.length - 1;
+                  let next = i;
+                  if (e.key === "ArrowRight") next = i === last ? 0 : i + 1;
+                  else if (e.key === "ArrowLeft") next = i === 0 ? last : i - 1;
+                  else if (e.key === "Home") next = 0;
+                  else if (e.key === "End") next = last;
+                  else return;
+                  e.preventDefault();
+                  setActive(next);
+                  const strip = e.currentTarget.closest('[role="tablist"]');
+                  strip?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+                }}
                 title={t.name || "unsaved draft"}
               >
                 <span className={"method m-" + t.req.method}>

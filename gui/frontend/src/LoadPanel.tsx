@@ -100,6 +100,8 @@ export default function LoadPanel({
   };
 
   const p = profiles[sel];
+  // A run needs a target; browsing profiles and history does not.
+  const hasURL = req.url.trim() !== "";
 
   return (
     <Modal title="Load test" onClose={close} wide>
@@ -176,9 +178,20 @@ export default function LoadPanel({
                   peak {p.peakRps} rps · {formatDuration(p.durationMs)} · {p.planned} req total
                   {p.maxWorkers ? ` · ≤${p.maxWorkers} workers` : ""}
                 </div>
-                <button className="primary" onClick={() => setStage("confirm")}>
+                <button
+                  className="primary"
+                  disabled={!hasURL}
+                  title={hasURL ? undefined : "the open request has no URL yet"}
+                  onClick={() => setStage("confirm")}
+                >
                   Run this profile
                 </button>
+                {!hasURL && (
+                  <p className="hint">
+                    Add a URL to the open request to run this profile — browsing profiles and history needs no
+                    request.
+                  </p>
+                )}
               </>
             )}
           </div>
